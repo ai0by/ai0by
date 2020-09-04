@@ -31,8 +31,10 @@ PHP Golang Python
 <summary>联系我</summary>
 
 - 邮箱：killnetsec@gmail.com
-- 微信：sbcoder (👇扫一扫更方便👇)
+- TG  ：ai0by 
 
+
+风向标博客 (👇扫一扫更方便👇)
 ![](https://api.46wz.com/qrcode.php?url=https://sbcoder.cn)
 
 </details>
