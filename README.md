@@ -35,6 +35,7 @@ PHP Golang Python
 
 
 风向标博客 (👇扫一扫更方便👇)
+
 ![](https://api.46wz.com/qrcode.php?url=https://sbcoder.cn)
 
 </details>
