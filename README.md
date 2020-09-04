@@ -33,7 +33,7 @@ PHP Golang Python
 - 邮箱：killnetsec@gmail.com
 - 微信：sbcoder (👇扫一扫更方便👇)
 
-[](https://api.46wz.com/qrcode.php?url=https://sbcoder.cn)
+![](https://api.46wz.com/qrcode.php?url=https://sbcoder.cn)
 
 </details>
 
