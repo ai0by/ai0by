@@ -17,10 +17,10 @@ PHP Golang Python
 
 <!--START_SECTION:waka-->
 
-![Lines of code](https://img.shields.io/badge/I%20am%20Written-104563%20lines%20of%20code-blue)
-
 - **想成为架构师的初学者**
 - **需要不断学习的奋斗者**
+
+![Lines of code](https://img.shields.io/badge/I%20am%20Written-104563%20lines%20of%20code-blue)
 
 <!--END_SECTION:waka-->
 
@@ -33,7 +33,7 @@ PHP Golang Python
 - 邮箱：killnetsec@gmail.com
 - 微信：sbcoder (👇扫一扫更方便👇)
 
-![](https://cdn.jsdelivr.net/gh/Arronlong/cdn/blogImg/20200807150643.png)
+[](https://api.46wz.com/qrcode.php?url=https://sbcoder.cn)
 
 </details>
 
