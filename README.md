@@ -36,7 +36,7 @@ PHP Golang Java Python
 
 风向标博客 (👇扫一扫更方便👇)
 
-![][https://cli.im/api/qrcode/code?text=sbcoder.cn]
+![](https://cli.im/api/qrcode/code?text=sbcoder.cn)
 
 </details>
 
