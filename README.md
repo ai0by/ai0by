@@ -36,7 +36,7 @@ PHP Golang Java Python
 
 风向标博客 (👇扫一扫更方便👇)
 
-![](https://cli.im/api/qrcode/code?text=sbcoder.cn)
+![](https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=sbcoder.cn)
 
 </details>
 
