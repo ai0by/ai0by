@@ -20,8 +20,6 @@ PHP Golang Java Python
 - **想成为架构师的初学者**
 - **需要不断学习的奋斗者**
 
-![Lines of code](https://img.shields.io/badge/I%20am%20Written-104563%20lines%20of%20code-blue)
-
 <!--END_SECTION:waka-->
 
 </details>
