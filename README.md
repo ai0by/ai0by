@@ -1,8 +1,6 @@
 # 🐤ai0by
 
-PHP Golang Java Python
-
-![github stats](https://github-readme-stats.vercel.app/api?username=ai0by&&show_icons=true&&title_color=1abc9c&&icon_color=1abc9c)
+Golang/C
 
 
 ### 💷 Blog
