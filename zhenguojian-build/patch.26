@@ -1,0 +1,250 @@
++        togglePlayback: _togglePlayback,
++        seekBy: _seekBy,
++        openEpisodes: () => unawaited(_openEpisodes()),
++        holdStart: _holdStartForRemote,
++        holdEnd: _holdEndForRemote,
++        setPaused: _setPausedForDialog,
++      );
++      _reportedActions = actions;
++      widget.onRemoteActions?.call(actions);
++    });
+     if (widget.active) _prepare();
+   }
+ 
++  @override
++  void didChangeDependencies() {
++    super.didChangeDependencies();
++    _television = AppLayout.isTelevision(context);
++  }
++
+   /// 播放器操作串行队列（0.3.1）。
+@@ -1682,6 +1963,35 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+     await _prepare(force: true);
+   }
+ 
++  bool _escalateDecode() {
++    if (_softwareDecode || _decodeEscalations >= 1) return false;
++    if (!_television) return false;
++    if (_closed || _playerReleased || !widget.active || !_foreground) {
++      return false;
++    }
++    _decodeEscalations++;
++    _softwareDecode = true;
++    _resumeFrom = _player?.state.position ?? Duration.zero;
++    _health.reset();
++    _firstFrameTicks = 0;
++    _noFrameTicks = 0;
++    if (mounted && !_closed) _toast('画面解码异常，已改用软件解码重试');
++    unawaited(_prepare(force: true));
++    return true;
++  }
++
+@@ -1993,6 +2303,8 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+       }
+       final current = _player;
+       if (current == null) return;
++      if (_hasVideoFrame && current.state.playing) _decodeStalls = 0;
+@@ -2003,6 +2315,9 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+           _firstFrameTicks = 0;
++          _decodeStalls++;
++          if (_decodeStalls >= 2 && _escalateDecode()) return;
+           unawaited(_recover());
+@@ -2050,6 +2365,9 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+         _noFrameTicks++;
+         if (_noFrameTicks >= _noFrameTicksLimit) {
+           _noFrameTicks = 0;
++          if (_escalateDecode()) return;
+           unawaited(_recover());
+@@ -2375,13 +2693,28 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+     _fullscreenRevision.dispose();
+     unawaited(ScreenBrightness.reset());
+     _tick.dispose();
++    if (_reportedActions != null) {
++      widget.onRemoteActions?.call(null);
++      _reportedActions = null;
++    }
++    _playFocus.dispose();
++    _retryFocus.dispose();
++    _controlsScope.dispose();
++    _episodeCurrentFocus.dispose();
+     if (_landscape) {
+       _landscape = false;
+-      unawaited(
+-        SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]),
+-      );
+-      unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
++      if (!_television) {
++        unawaited(
++          SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]),
++        );
++        unawaited(
++          SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge),
++        );
++      }
+     }
+@@ -2502,6 +2835,10 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+   void _scheduleHide() {
+     _hideTimer?.cancel();
+     if (_closed || _panelOpen) return;
++    if (_television && _controlsScope.hasFocus) return;
+@@ -2510,12 +2847,102 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+       if (_seekValue != null) return;
+       if (!(_player?.state.playing ?? false)) return;
+       if (_interactions?.boosting ?? false) return;
++      if (_television && _controlsScope.hasFocus) return;
+       setState(() => _controlsVisible = false);
+@@
++  void _showControlsForRemote() {
++    if (_closed) return;
++    _showControls();
++    WidgetsBinding.instance.addPostFrameCallback((_) {
++      if (!mounted || _closed) return;
++      if (_error != null) {
++        _retryFocus.requestFocus();
++      } else {
++        _playFocus.requestFocus();
++      }
++    });
++  }
++
++  bool _hideControlsForRemote() {
++    if (_closed) return false;
++    if (!_controlsVisible && !_controlsScope.hasFocus) return false;
++    _hideTimer?.cancel();
++    if (_controlsVisible) {
++      setState(() => _controlsVisible = false);
++      _refreshFullscreen(immediate: true);
++    }
++    widget.onReturnFocus?.call();
++    return true;
++  }
++
++  void _holdStartForRemote() {
++    if (_closed || _loading || _error != null) return;
++    _interactions?.holdStart();
++  }
++
++  void _holdEndForRemote() {
++    _interactions?.holdEnd();
++  }
++
++  void _seekBy(int seconds) {
++    final player = _player;
++    if (player == null || _closed || _loading) return;
++    final duration = player.state.duration;
++    if (duration <= Duration.zero) return;
++    final target = (player.state.position.inMilliseconds + seconds * 1000)
++        .clamp(0, duration.inMilliseconds);
++    unawaited(_seekTo(Duration(milliseconds: target)));
++    _interactions?.hint(
++      '${seconds > 0 ? '快进至' : '后退至'} ${formatPosition(target / 1000)}',
++    );
++    _showControls();
++  }
++
++  bool _dialogPaused = false;
++
++  void _setPausedForDialog(bool paused) {
++    final player = _player;
++    if (player == null || _closed) return;
++    if (paused) {
++      if (_dialogPaused) return;
++      _dialogPaused = player.state.playing;
++      if (_dialogPaused) {
++        _userPaused = true;
++        unawaited(player.pause());
++      }
++      return;
++    }
++    if (!_dialogPaused) return;
++    _dialogPaused = false;
++    _userPaused = false;
++    unawaited(player.play());
++  }
++
+@@ -2926,6 +3353,22 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+             ].join(','),
+           );
+           await platform.setProperty('network-timeout', '20');
++          try {
++            await platform.setProperty('hwdec', _softwareDecode ? 'no' : 'auto-safe');
++          } catch (_) {}
+@@ -3162,9 +3605,10 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+             _displayTitle,
+             maxLines: 1,
+             overflow: TextOverflow.ellipsis,
+-            style: const TextStyle(
++            style: TextStyle(
+               color: Colors.white,
+-              fontSize: 17,
++              fontSize: _television ? 21 : 17,
+@@ -3439,12 +3883,19 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+     Key? key,
+   }) {
+     const accent = Color(0xFFFF765F);
+-    return InkWell(
++    return RemoteTarget(
+       key: key,
+-      onTap: onTap,
+-      borderRadius: BorderRadius.circular(10),
++      onPressed: onTap,
++      accent: accent,
++      selected: selected,
++      autofocus: selected && _television,
++      label: '$label${selected ? '，当前选项' : ''}',
+       child: AnimatedContainer(
+         duration: const Duration(milliseconds: 140),
++        alignment: Alignment.center,
+@@ -3455,6 +3906,8 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+         ),
+         child: Text(
+           label,
++          maxLines: 1,
++          overflow: TextOverflow.ellipsis,
+@@ -3595,6 +4048,16 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+         gridController.position.maxScrollExtent,
+       );
+       gridController.jumpTo(target);
++      WidgetsBinding.instance.addPostFrameCallback((_) {
++        if (_television && _episodeCurrentFocus.context != null) {
++          _episodeCurrentFocus.requestFocus();
++        }
++      });
+@@ -3620,10 +4083,16 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+             itemBuilder: (context, index) {
+               final selected = index == _episodeIndex;
+               const accent = Color(0xFFFF765F);
+-              return InkWell(
++              return RemoteTarget(
+                 key: ValueKey('episode-$index'),
+-                onTap: () => Navigator.pop(context, index),
+-                borderRadius: BorderRadius.circular(10),
++                onPressed: () => Navigator.pop(context, index),
++                accent: accent,
++                selected: selected,
++                focusNode: index == currentIndex ? _episodeCurrentFocus : null,
++                label:
++                    '第 ${episodes[index].number} 集${selected ? '，正在播放' : ''}',
+@@ -3692,6 +4161,9 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+         defaultTargetPlatform == TargetPlatform.android ||
+         defaultTargetPlatform == TargetPlatform.iOS;
+     if (!mobile) return;
++    if (_television) return;
+@@ -3774,6 +4246,8 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+   Future<void> _restorePortraitSystemUi() async {
++    if (_television) return;
+@@ -4113,7 +4587,9 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+               color: Colors.black,
+               child: Theme(
+-                data: _fullscreenTheme,
++                data: _television
++                    ? _fullscreenTvTheme
++                    : _fullscreenTheme,
+@@ -4507,6 +4983,21 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+     trackShape: const RectangularSliderTrackShape(),
+   );
+ 
++  static final ThemeData _fullscreenTvTheme = televisionTheme(
++    _fullscreenTheme.copyWith(
++      sliderTheme: fullscreenSliderTheme.copyWith(
++        trackHeight: 6,
