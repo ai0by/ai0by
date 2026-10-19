@@ -1,0 +1,110 @@
+name: Build ZhenGuoJian TV APKs
+
+on:
+  push:
+    branches:
+      - build/zhenguojian-apk-20261019
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      GOPROXY: https://proxy.golang.org,direct
+      GOSUMDB: sum.golang.org
+    steps:
+      - name: Checkout build carrier
+        uses: actions/checkout@v4
+
+      - name: Prepare exact source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          carrier="$GITHUB_WORKSPACE"
+          cat "$carrier"/zhenguojian-build/patch.* > /tmp/zhenguojian.patch
+          echo "8949841d9155acbe3bc97a357f00dc3bfc9754d62a25d4b21a16e9503235a724  /tmp/zhenguojian.patch" | sha256sum -c -
+          git clone https://github.com/kuoluoss/zhenguojian.git /tmp/zhenguojian
+          cd /tmp/zhenguojian
+          git checkout c934d1e2aa4f59c6ef93813ba63cd9376cbb159e
+          git apply --check /tmp/zhenguojian.patch
+          git apply /tmp/zhenguojian.patch
+          grep -q '^version: 0.8.4+79$' pubspec.yaml
+          grep -q 'pinyin: ^3.3.0' pubspec.yaml
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Go 1.24.1
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.1'
+          cache-dependency-path: /tmp/zhenguojian/native/go.sum
+
+      - name: Set up Flutter 3.47.4
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.4'
+          channel: stable
+          cache: true
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 36 and NDK 28.2
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
+
+      - name: Validate pinyin search
+        working-directory: /tmp/zhenguojian
+        run: flutter test test/pinyin_test.dart
+
+      - name: Build real TV APKs
+        working-directory: /tmp/zhenguojian
+        run: python3 scripts/build_android.py --tv --universal --all-sources
+
+      - name: Verify requested APKs
+        working-directory: /tmp/zhenguojian
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ALL=dist/android/zhenguojian-0.8.4+79-all.apk
+          ARM64=dist/android/zhenguojian-0.8.4+79-arm64-v8a.apk
+          test -s "$ALL"
+          test -s "$ARM64"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$ALL"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$ARM64"
+          python3 - <<'PY'
+          import zipfile
+          files = {
+              'dist/android/zhenguojian-0.8.4+79-all.apk': ['arm64-v8a', 'armeabi-v7a'],
+              'dist/android/zhenguojian-0.8.4+79-arm64-v8a.apk': ['arm64-v8a'],
+          }
+          required = ['libduanju_core.so', 'libflutter.so', 'libapp.so', 'libmpv.so', 'libffmpegkit.so']
+          for path, abis in files.items():
+              with zipfile.ZipFile(path) as archive:
+                  names = set(archive.namelist())
+              for abi in abis:
+                  for library in required:
+                      assert f'lib/{abi}/{library}' in names, (path, abi, library)
+              print(path, ','.join(abis), 'OK')
+          PY
+          sha256sum "$ALL" "$ARM64" | tee dist/android/REQUESTED-SHA256SUMS.txt
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: zhenguojian-tv-apks
+          path: |
+            /tmp/zhenguojian/dist/android/zhenguojian-0.8.4+79-all.apk
+            /tmp/zhenguojian/dist/android/zhenguojian-0.8.4+79-arm64-v8a.apk
+            /tmp/zhenguojian/dist/android/REQUESTED-SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
