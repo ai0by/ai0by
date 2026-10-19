@@ -114,7 +114,7 @@
 +  ///
 +  /// 只暂停"本来在播"的视频，恢复时也只在确实被本次暂停过才继续，
 +  /// 避免把用户自己按的暂停改回播放。
-+  final void Function(bool paused);
++  final void Function(bool paused) setPaused;
 +}
 +
  /// 单页：一个视频 + 播放控件 + 信息栏。
