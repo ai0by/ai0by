@@ -1,0 +1,67 @@
+         with zipfile.ZipFile(source) as archive:
+             names = set(archive.namelist())
+-            required = [f'lib/{abi}/{library}' for library in
+-                        ['libduanju_core.so', 'libflutter.so', 'libapp.so', 'libmpv.so', 'libffmpegkit.so']]
++            required = [f'lib/{abi}/{library}' for abi in required_abis for library in libraries]
+             missing = set(required) - names
+             if missing:
+                 raise SystemExit('APK 缺少原生库：' + ', '.join(sorted(missing)))
++
++    for abi in abis:
++        source = root / 'build' / 'app' / 'outputs' / 'flutter-apk' / f'app-{abi}-release.apk'
++        verify_android_apk(source, [abi])
+         target = output / f'{variant.slug}-{version}-{abi}.apk'
+         shutil.copy2(source, target)
+         artifacts.append(target)
++
++    if options.universal:
++        source = root / 'build' / 'app' / 'outputs' / 'flutter-apk' / 'app-release.apk'
++        verify_android_apk(source, abis)
++        target = output / f'{variant.slug}-{version}-all.apk'
++        shutil.copy2(source, target)
++        artifacts.append(target)
+ else:
+     bundle = root / 'build' / 'windows' / 'x64' / 'runner' / 'Release'
+     required = ['zhenguojian.exe', 'duanju_core.dll', 'flutter_windows.dll', 'libffmpegkit.dll',
+diff --git a/scripts/test_app_build.py b/scripts/test_app_build.py
+index 819f217..aa86a94 100644
+--- a/scripts/test_app_build.py
++++ b/scripts/test_app_build.py
+@@ -88,6 +88,31 @@ class AppBuildTests(unittest.TestCase):
+                     self.assertIn('--dart-define=ALL_SOURCES=' + str(enabled).lower(), flutter)
+                     self.assertIn('core.buildAllSources=' + str(enabled).lower(), BuildVariant(enabled).linker_flags)
+ 
++    def test_android_tv_universal_builds_split_and_all_apks(self):
++        root = Path(__file__).resolve().parent
++        script = root / 'build_android.py'
++        arguments = [str(script), '--all-sources', '--tv', '--universal']
++        with mock.patch.object(sys, 'argv', arguments), \
++                mock.patch.dict(os.environ, {'PATH': '/tools'}, clear=True), \
++                mock.patch('shutil.which', return_value='/tools/flutter'), \
++                mock.patch('subprocess.run') as run:
++            runpy.run_path(str(script), run_name='__main__')
++
++        calls = [call.args[0] for call in run.call_args_list]
++        flutter_builds = [call for call in calls if call[:3] == ['/tools/flutter', 'build', 'apk']]
++        self.assertEqual(len(flutter_builds), 2)
++        split = next(call for call in flutter_builds if '--split-per-abi' in call)
++        universal = next(call for call in flutter_builds if '--split-per-abi' not in call)
++        for call in (split, universal):
++            self.assertIn('--dart-define=ALL_SOURCES=true', call)
++            self.assertIn('android-arm64,android-arm', call)
++
++        package = next(call for call in calls if any(str(arg).endswith('package_release.py') for arg in call))
++        self.assertIn('--universal', package)
++        self.assertEqual(package.count('--abi'), 2)
++        self.assertIn('arm64-v8a', package)
++        self.assertIn('armeabi-v7a', package)
++
+ 
+ if __name__ == '__main__':
+     unittest.main()
+diff --git a/test/interface_test.dart b/test/interface_test.dart
+index 97e384f..bfe4e97 100644
+--- a/test/interface_test.dart
++++ b/test/interface_test.dart
+@@ -96,8 +96,14 @@ void main() {
+       if (SourceGroup.fromSources(SourceSite.values).length <= 1) return;
