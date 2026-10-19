@@ -53,14 +53,15 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Install Android SDK 36 and NDK 28.2
         shell: bash
         run: |
+          set -euxo pipefail
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          command -v sdkmanager
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
+          test -x "$ANDROID_HOME/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
 
       - name: Validate pinyin search
         working-directory: /tmp/zhenguojian
