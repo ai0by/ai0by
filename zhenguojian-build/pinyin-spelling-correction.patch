@@ -1,0 +1,49 @@
+--- a/lib/pinyin.dart
++++ b/lib/pinyin.dart
+@@ -8,7 +8,7 @@
+ /// 搜索同时支持：
+ /// - 首字母：`hjdnz` -> 「黄金大逆转」；
+ /// - 首字母模糊缩写：`hdz` -> 「黄金大逆转」；
+-/// - 完整/部分全拼：`huangjin` / `huangjindanzhuan`；
++/// - 完整/部分全拼：`huangjin` / `huangjindanizhuan`；
+ /// - 大小写混输。
+ const int _maxCacheEntries = 4000;
+ final Map<String, _PinyinKey> _cache = <String, _PinyinKey>{};
+@@ -23,7 +23,7 @@
+   /// 词组感知的首字母，例如「重生」-> `cs`。
+   final String initials;
+ 
+-  /// 词组感知的完整拼音，例如「黄金大逆转」-> `huangjindanzhuan`。
++  /// 词组感知的完整拼音，例如「黄金大逆转」-> `huangjindanizhuan`。
+   final String full;
+ 
+   /// 逐字首选读音的首字母，仅作为旧行为兼容兜底。
+--- a/test/pinyin_test.dart
++++ b/test/pinyin_test.dart
+@@ -19,7 +19,7 @@
+   group('pinyin keys', () {
+     test('词组感知首字母与全拼', () {
+       expect(pinyinInitials('黄金大逆转'), 'hjdnz');
+-      expect(pinyinFull('黄金大逆转'), 'huangjindanzhuan');
++      expect(pinyinFull('黄金大逆转'), 'huangjindanizhuan');
+       // 多音字应按词组实际读音处理：重生 = chong sheng。
+       expect(pinyinInitials('重生'), 'cs');
+       expect(pinyinFull('重生'), 'chongsheng');
+@@ -42,7 +42,7 @@
+     test('2–48 个纯字母可作为拼音', () {
+       expect(isPinyinQuery('hjdnz'), isTrue);
+       expect(isPinyinQuery('HUANGJIN'), isTrue);
+-      expect(isPinyinQuery('huangjindanzhuan'), isTrue);
++      expect(isPinyinQuery('huangjindanizhuan'), isTrue);
+       expect(isPinyinQuery('a'), isFalse);
+       expect(isPinyinQuery('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'), isFalse);
+     });
+@@ -63,7 +63,7 @@
+ 
+     test('完整拼音和部分全拼命中', () {
+       expect(matchesPinyin('黄金大逆转', 'huangjin'), isTrue);
+-      expect(matchesPinyin('黄金大逆转', 'huangjindanzhuan'), isTrue);
++      expect(matchesPinyin('黄金大逆转', 'huangjindanizhuan'), isTrue);
+       expect(matchesPinyin('黄金大逆转', 'HUANGJIN'), isTrue);
+     });
+ 
