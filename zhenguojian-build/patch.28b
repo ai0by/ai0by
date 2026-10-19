@@ -1,0 +1,64 @@
++                                    // 左右键变成"改数值"而不是"移动焦点"，
++                                    // 用户想按右键去全屏按钮会变成拖动进度条，
++                                    // 而且上下键也未必能跳出去，看起来就像遥控器坏了。
++                                    //
++                                    // 电视上本来就有更合适的做法：控件隐藏时
++                                    // 左右键直接 ±10 秒、按住连续快进，比拖进度条准。
++                                    child: ExcludeFocus(
++                                      excluding: _television,
++                                      child: SliderTheme(
++                                      // 0.8.1：电视上进度条加粗，远看也能看清。
++                                      data: SliderTheme.of(context).copyWith(
++                                        trackHeight: _television ? 6 : 3,
++                                      ),
+                                       child: Slider(
+                                         key: const ValueKey('feed-progress'),
+                                         value:
+@@ -4885,11 +5406,13 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+                                         },
+                                       ),
+                                     ),
++                                    ),
+                                   ),
+                                   IconButton(
+                                     key: const ValueKey('feed-landscape'),
+                                     tooltip: _landscape ? '退出全屏' : '全屏',
+                                     onPressed: _toggleLandscape,
++                                    style: _overlayButtonStyle(context),
+                                     icon: Icon(
+                                       _landscape
+                                           ? Icons.fullscreen_exit_rounded
+@@ -4957,11 +5480,25 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+               },
+             ),
+           ),
++            ),
++          ),
+         ),
+       ],
+     );
+   }
+ 
++  /// 控件层焦点变化（0.8.0 电视支持）。
++  ///
++  /// 焦点进入控件层时停掉自动隐藏计时；离开时恢复计时。
++  /// 只在电视模式下有意义，但记录本身无副作用，非电视模式也一并记录。
++  void _onControlsFocusChanged(bool focused) {
++    if (focused) {
++      _hideTimer?.cancel();
++    } else if (mounted && _controlsVisible && !_closed) {
++      _scheduleHide();
++    }
++  }
++
+   /// 底部功能按钮（0.6.3：改为等宽，位置固定）。
+   ///
+   /// 用户反馈："下方 5 个功能按钮位置没固定，切换连播本剧后由于和之前
+@@ -4973,6 +5510,33 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+   ///
+   /// 修法：每个按钮**固定占 1/5 槽位**（`Expanded` + 内容居中），
+   /// 与标签文字长短无关，位置恒定；标签仍保留省略号兜底。
++  /// 播放控件里 IconButton 的电视焦点样式（0.8.3）。
++  ///
++  /// 这些按钮是纯白图标压在视频画面 + 深色渐变上，M3 默认的 focusColor
++  /// 只是一层很淡的主题色叠加，3 米外根本看不出"焦点停在哪"。
