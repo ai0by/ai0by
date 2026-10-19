@@ -58,7 +58,7 @@ jobs:
         run: |
           set -euxo pipefail
           echo "ANDROID_HOME=$ANDROID_HOME"
-          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" "$ANDROID_HOME/tools" -type f -name sdkmanager 2>/dev/null | head -n1)"
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" "$ANDROID_HOME/tools" -type f -name sdkmanager -print -quit 2>/dev/null)"
           test -n "$SDKMANAGER"
           chmod +x "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
