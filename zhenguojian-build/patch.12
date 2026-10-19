@@ -1,0 +1,432 @@
+-              padding: const EdgeInsets.only(top: 8),
+-              child: Text(
+-                '已保存 ${preferences.quality}P 偏好，本集暂无此画质。',
+-                style: const TextStyle(fontSize: 13, color: Colors.white70),
+-              ),
+-            ),
+-          const SizedBox(height: 20),
+-        ],
+-        if (all) ...[
+-          SwitchListTile.adaptive(
+-            key: const ValueKey('player-preload-enabled'),
+-            contentPadding: EdgeInsets.zero,
+-            title: const Text('下一集预加载'),
+-            subtitle: Text(widget.local ? '本地播放不预取网络视频' : widget.preloadStatus),
+-            value: preferences.preload,
+-            onChanged: _busy
+-                ? null
+-                : (value) => _run(
+-                    () => widget.onPreferences(
+-                      preferences.copyWith(preload: value),
+-                    ),
+-                  ),
+-          ),
+-          const SizedBox(height: 8),
+-          SwitchListTile.adaptive(
+-            key: const ValueKey('player-auto-advance'),
+-            contentPadding: EdgeInsets.zero,
+-            title: const Text('自动连播'),
+-            subtitle: const Text('关闭后，播放结束停在当前集'),
+-            value: preferences.autoAdvance,
+-            onChanged: _busy
+-                ? null
+-                : (value) => _run(
+-                    () => widget.onPreferences(
+-                      preferences.copyWith(autoAdvance: value),
+-                    ),
+-                  ),
+-          ),
+-          const SizedBox(height: 8),
+-          OutlinedButton.icon(
+-            key: const ValueKey('player-favorite'),
+-            onPressed: _busy ? null : () => _run(widget.onFavorite),
+-            icon: Icon(
+-              widget.favorite
+-                  ? Icons.bookmark_rounded
+-                  : Icons.bookmark_border_rounded,
+-            ),
+-            label: Text(widget.favorite ? '取消追剧' : '加入追剧'),
+-          ),
+-          const SizedBox(height: 20),
+-          Text(
+-            widget.mobile
+-                ? '上下滑切集；长按画面临时 3 倍速，松开恢复。竖屏轻点暂停，横屏轻点显示控制；双击播放或暂停。'
+-                : '空格：播放 / 暂停\n左右键：后退 / 快进 5 秒\n长按右键或画面：临时 3 倍速\n上下键：音量 ±5%，M：静音\nF、F11、Ctrl+F：全屏\nEsc：先关闭菜单，再退出全屏',
+-            style: const TextStyle(
+-              fontSize: 13,
+-              color: Colors.white70,
+-              height: 1.6,
+-            ),
+-          ),
+-        ],
+-      ],
+-    );
+-  }
+-}
+-
+-class PlayerEpisodeGrid extends StatelessWidget {
+-  const PlayerEpisodeGrid({
+-    super.key,
+-    required this.episodes,
+-    required this.currentIndex,
+-    required this.onSelected,
+-    this.keyPrefix = 'play-episode',
+-  });
+-  final List<Episode> episodes;
+-  final int currentIndex;
+-  final ValueChanged<int> onSelected;
+-  final String keyPrefix;
+-  @override
+-  Widget build(BuildContext context) => EpisodeBrowser(
+-    episodes: episodes,
+-    currentNumber: episodes.isEmpty
+-        ? null
+-        : episodes[currentIndex.clamp(0, episodes.length - 1)].number,
+-    onSelected: onSelected,
+-    keyPrefix: keyPrefix,
+-  );
+-}
+diff --git a/lib/rankings_screen.dart b/lib/rankings_screen.dart
+index 58b7d77..9f818cf 100644
+--- a/lib/rankings_screen.dart
++++ b/lib/rankings_screen.dart
+@@ -1,11 +1,13 @@
+ import 'package:flutter/material.dart';
+ 
++import 'app_layout.dart';
+ import 'catalog_filters.dart';
+ import 'core_bridge.dart';
+ import 'detail_screen.dart';
+ import 'local_store.dart';
+ import 'models.dart';
+ import 'ranking_models.dart';
++import 'remote_widgets.dart';
+ import 'widgets.dart';
+ 
+ class RankingsScreen extends StatefulWidget {
+@@ -143,6 +145,95 @@ class _RankingsScreenState extends State<RankingsScreen> {
+     _load();
+   }
+ 
++  /// 榜单站源入口（0.8.2）。
++  ///
++  /// 原先是 `PopupMenuButton` 的裸文字：电视上不可聚焦（遥控器停不到），
++  /// 弹出菜单又贴着 AppBar、没有焦点环。现在统一成 [SourceSwitchPill]，
++  /// 电视下按确定打开可聚焦的居中列表。
++  Widget _sourceSwitcher(List<SourceGroup> groups) => SourceSwitchPill(
++    key: const ValueKey('rankings-source-switch'),
++    label: _board == null
++        ? '榜单'
++        : '${SourceSite.byId(_board!.source).groupName}榜单',
++    count: groups.length,
++    onPressed: groups.length > 1 ? () => _pickGroup(groups) : null,
++  );
++
++  Future<void> _pickGroup(List<SourceGroup> groups) async {
++    final options = [
++      for (final group in groups)
++        (group.id, group.name, true),
++    ];
++    String? picked;
++    if (AppLayout.isTelevision(context)) {
++      picked = await showDialog<String>(
++        context: context,
++        barrierColor: Colors.black.withValues(alpha: .66),
++        builder: (dialogContext) => Dialog(
++          backgroundColor: Colors.transparent,
++          elevation: 0,
++          insetPadding: const EdgeInsets.symmetric(
++            horizontal: 48,
++            vertical: 32,
++          ),
++          child: ConstrainedBox(
++            constraints: const BoxConstraints(maxWidth: 560),
++            child: RemoteOptionSheet(
++              title: '选择榜单站源',
++              keyPrefix: 'rank-group',
++              options: options,
++            ),
++          ),
++        ),
++      );
++    } else {
++      picked = await showModalBottomSheet<String>(
++        context: context,
++        backgroundColor: Colors.transparent,
++        builder: (sheetContext) => SafeArea(
++          top: false,
++          child: Container(
++            margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
++            padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
++            decoration: BoxDecoration(
++              color: Theme.of(sheetContext).colorScheme.surface,
++              borderRadius: BorderRadius.circular(18),
++            ),
++            child: Column(
++              mainAxisSize: MainAxisSize.min,
++              crossAxisAlignment: CrossAxisAlignment.stretch,
++              children: [
++                const Text(
++                  '选择榜单站源',
++                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
++                ),
++                const SizedBox(height: 4),
++                for (final group in groups)
++                  ListTile(
++                    key: ValueKey('rank-group-${group.id}'),
++                    dense: true,
++                    contentPadding: EdgeInsets.zero,
++                    title: Text(group.name),
++                    trailing: group.id == _board?.groupId
++                        ? const Icon(Icons.check_rounded)
++                        : null,
++                    onTap: () => Navigator.of(sheetContext).pop(group.id),
++                  ),
++              ],
++            ),
++          ),
++        ),
++      );
++    }
++    if (picked == null || !mounted) return;
++    for (final board in _boards) {
++      if (board.groupId == picked) {
++        _select(board);
++        return;
++      }
++    }
++  }
++
+   @override
+   Widget build(BuildContext context) {
+     final groups = SourceGroup.fromSources(
+@@ -169,27 +260,8 @@ class _RankingsScreenState extends State<RankingsScreen> {
+         .toList();
+     return Scaffold(
+       appBar: AppBar(
+-        title: PopupMenuButton<SourceGroup>(
+-          tooltip: '切换榜单站源',
+-          enabled: groups.length > 1,
+-          onSelected: (group) =>
+-              _select(_boards.firstWhere((board) => board.groupId == group.id)),
+-          itemBuilder: (_) => [
+-            for (final group in groups)
+-              PopupMenuItem(value: group, child: Text(group.name)),
+-          ],
+-          child: Row(
+-            mainAxisSize: MainAxisSize.min,
+-            children: [
+-              Text(
+-                _board == null
+-                    ? '榜单'
+-                    : '${SourceSite.byId(_board!.source).groupName}榜单',
+-              ),
+-              if (groups.length > 1) const Icon(Icons.expand_more_rounded),
+-            ],
+-          ),
+-        ),
++        toolbarHeight: AppLayout.isTelevision(context) ? 64 : null,
++        title: _sourceSwitcher(groups),
+         actions: [
+           RefreshAction(
+             loading: _loading || _more,
+diff --git a/lib/remote_widgets.dart b/lib/remote_widgets.dart
+index b33e22a..5f7b667 100644
+--- a/lib/remote_widgets.dart
++++ b/lib/remote_widgets.dart
+@@ -1,8 +1,124 @@
+ import 'package:flutter/material.dart';
+ 
++import 'app_layout.dart';
+ import 'search_input.dart';
++import 'tv_keyboard.dart';
+ import 'package:flutter/services.dart';
+ 
++/// 「切换站源」胶囊入口（0.8.2）。
++///
++/// 首页 AppBar 和榜单页 AppBar 原本都是"裸文字 + 下箭头"，问题一致：
++/// - 看不出可点（和标题长得一模一样）；
++/// - 电视上 `InkWell` 不参与焦点遍历，遥控器**停不到这里**，等于没有入口。
++///
++/// 统一成胶囊后：图标 + 名称 + 站源数量 + 箭头，电视下再套 [RemoteTarget]
++/// 拿到焦点环 / 放大 / 外发光。
++class SourceSwitchPill extends StatelessWidget {
++  const SourceSwitchPill({
++    super.key,
++    required this.label,
++    required this.onPressed,
++    this.count = 1,
++    this.icon,
++    this.television,
++  });
++
++  final String label;
++
++  /// 该分组下的站源数量；>1 时显示数量徽标。
++  final int count;
++  final VoidCallback? onPressed;
++  final IconData? icon;
++
++  /// 覆盖电视判定（测试用）；为空时读 [AppLayout]。
++  final bool? television;
++
++  @override
++  Widget build(BuildContext context) {
++    final tv = television ?? AppLayout.isTelevision(context);
++    final colors = Theme.of(context).colorScheme;
++    final enabled = onPressed != null;
++    final pill = Container(
++      // 用 minHeight + 内边距而不是固定 height：系统字体放大（textScale 2.0）
++      // 时固定高度会把标题裁掉，minHeight 能自然长高。
++      constraints: BoxConstraints(minHeight: tv ? 52 : 40),
++      padding: EdgeInsets.symmetric(
++        horizontal: tv ? 14 : 10,
++        vertical: tv ? 6 : 4,
++      ),
++      decoration: BoxDecoration(
++        color: colors.surfaceContainerHighest.withValues(alpha: tv ? .62 : .78),
++        borderRadius: BorderRadius.circular(tv ? 14 : 12),
++        border: Border.all(
++          color: colors.outlineVariant.withValues(alpha: .55),
++          width: 1,
++        ),
++      ),
++      child: Row(
++        mainAxisSize: MainAxisSize.min,
++        children: [
++          Icon(
++            icon ?? (tv ? Icons.live_tv_rounded : Icons.dns_rounded),
++            size: tv ? 22 : 17,
++            color: enabled ? colors.primary : colors.onSurfaceVariant,
++          ),
++          SizedBox(width: tv ? 10 : 7),
++          Flexible(
++            child: Text(
++              label,
++              maxLines: 1,
++              overflow: TextOverflow.ellipsis,
++              style: TextStyle(
++                fontSize: tv ? 20 : 16,
++                fontWeight: FontWeight.w800,
++              ),
++            ),
++          ),
++          // 多站源时给出数量，避免「黄果」被误认为只有一个入口。
++          if (tv && count > 1) ...[
++            const SizedBox(width: 8),
++            Container(
++              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
++              decoration: BoxDecoration(
++                color: colors.primary.withValues(alpha: .16),
++                borderRadius: BorderRadius.circular(8),
++              ),
++              child: Text(
++                '$count 源',
++                style: TextStyle(
++                  fontSize: 13,
++                  fontWeight: FontWeight.w700,
++                  color: colors.primary,
++                ),
++              ),
++            ),
++          ],
++          if (enabled) ...[
++            const SizedBox(width: 2),
++            Icon(
++              Icons.expand_more_rounded,
++              size: tv ? 26 : 20,
++              color: colors.onSurfaceVariant,
++            ),
++          ],
++        ],
++      ),
++    );
++    if (tv) {
++      return RemoteTarget(
++        onPressed: onPressed,
++        label: '站源：$label${enabled ? '，按确定切换' : '，当前不可用'}',
++        child: pill,
++      );
++    }
++    return InkWell(
++      borderRadius: BorderRadius.circular(12),
++      onTap: onPressed,
++      child: pill,
++    );
++  }
++}
++
+ class RemoteTarget extends StatefulWidget {
+   const RemoteTarget({
+     super.key,
+@@ -13,6 +129,7 @@ class RemoteTarget extends StatefulWidget {
+     this.autofocus = false,
+     this.selected = false,
+     this.label,
++    this.accent,
+   });
+   final Widget child;
+   final VoidCallback? onPressed;
+@@ -22,6 +139,13 @@ class RemoteTarget extends StatefulWidget {
+   final bool selected;
+   final String? label;
+ 
++  /// 焦点色覆盖（0.8.2）。
++  ///
++  /// 播放页的弹层是**深色自定义主题**（底色 #191A20、主色 #FF765F），
++  /// 直接用 `colorScheme.primaryContainer` 会出现一块蓝色底，和橙色 UI 打架。
++  /// 传入 accent 后，焦点描边/外发光/焦点底都用这个色系推导。
++  final Color? accent;
++
+   @override
+   State<RemoteTarget> createState() => _RemoteTargetState();
+ }
+@@ -30,71 +154,92 @@ class _RemoteTargetState extends State<RemoteTarget> {
+   bool _focused = false;
+ 
+   @override
+-  Widget build(BuildContext context) => FocusableActionDetector(
+-    focusNode: widget.focusNode,
+-    autofocus: widget.autofocus,
+-    enabled: widget.onPressed != null,
+-    actions: {
+-      ActivateIntent: CallbackAction<ActivateIntent>(
+-        onInvoke: (_) {
+-          widget.onPressed?.call();
+-          return null;
+-        },
+-      ),
+-    },
+-    onFocusChange: (focused) {
+-      if (mounted) {
+-        setState(() => _focused = focused);
+-      }
+-      if (focused) {
+-        widget.onFocus?.call();
+-        WidgetsBinding.instance.addPostFrameCallback((_) {
+-          if (mounted && _focused) {
+-            Scrollable.ensureVisible(
+-              context,
+-              alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+-            );
+-          }
+-        });
+-      }
+-    },
+-    child: Semantics(
+-      button: true,
++  Widget build(BuildContext context) {
++    final colors = Theme.of(context).colorScheme;
++    final accent = widget.accent ?? colors.primary;
++    final focusFill = widget.accent != null
++        ? accent.withValues(alpha: .22)
++        : colors.primaryContainer;
++    // 0.8.1 焦点样式增强（10 英尺 UI）：
++    // - 缩放 1.03：远距离一眼能看出"当前在哪"；
++    // - 焦点环 3.5px + 外发光：海报本身颜色杂乱时，纯描边容易糊掉；
++    // - 选中态（selected）保持细一档的描边，与焦点态区分开。
++    return FocusableActionDetector(
++      focusNode: widget.focusNode,
++      autofocus: widget.autofocus,
+       enabled: widget.onPressed != null,
+-      focused: _focused,
