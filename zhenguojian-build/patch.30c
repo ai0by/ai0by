@@ -1,0 +1,16 @@
++      expect(matchesPinyin('重生', 'zs'), isTrue);
++    });
++
++    test('顺序错误或不存在字母不命中', () {
++      expect(matchesPinyin('黄金大逆转', 'znh'), isFalse);
++      expect(matchesPinyin('黄金大逆转', 'hjdq'), isFalse);
++    });
++
++    test('非拼音关键词不进入拼音匹配', () {
++      expect(matchesPinyin('黄金大逆转', '黄金'), isFalse);
++      expect(matchesPinyin('黄金大逆转', 'a'), isFalse);
++    });
++  });
++
++  group('matchesDramaQuery 拼音兜底', () {
++    test('首字母和全拼都能搜到中文标题', () {
