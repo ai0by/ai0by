@@ -1,0 +1,33 @@
+@@ -3774,6 +4246,8 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+ 
+   /// 恢复竖屏方向与系统栏（退出全屏收尾）。
+   Future<void> _restorePortraitSystemUi() async {
++    // 电视（0.8.0）：不锁竖屏，也不切系统栏模式。
++    if (_television) return;
+     final mobile =
+         defaultTargetPlatform == TargetPlatform.android ||
+         defaultTargetPlatform == TargetPlatform.iOS;
+@@ -4113,7 +4587,9 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+               // （横杆变成居中圆盘，表现为"进度条跑到中间"）。
+               color: Colors.black,
+               child: Theme(
+-                data: _fullscreenTheme,
++                data: _television
++                    ? _fullscreenTvTheme
++                    : _fullscreenTheme,
+                 child: Stack(
+                   fit: StackFit.expand,
+                   children: [
+@@ -4507,6 +4983,21 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+     trackShape: const RectangularSliderTrackShape(),
+   );
+ 
++  /// 电视版全屏主题（0.8.1）：在全屏深色主题上叠加遥控焦点样式。
++  ///
++  /// 全屏路由 push 到 Navigator 之上，**不在** `MaterialApp.builder` 的
++  /// 主题树里，所以电视模式下的焦点环/按钮最小尺寸必须在这里再套一次，
++  /// 否则一进全屏，遥控器就没有可见的焦点提示。
++  static final ThemeData _fullscreenTvTheme = televisionTheme(
++    _fullscreenTheme.copyWith(
++      sliderTheme: fullscreenSliderTheme.copyWith(
++        trackHeight: 6,
