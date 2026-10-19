@@ -1,0 +1,371 @@
++            child: _SourcePickerSheet(
++              groups: groups,
++              initial: initial,
++              allSources: widget.store.sources,
++            ),
++          ),
++        ),
++      );
++    }
+     if (result == null || !mounted) return;
+     // 「确定」：把勾选的分组展开成站点 id 列表后应用。
+     final ids = <String>[
+@@ -457,6 +488,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+         _allSources = false;
+       });
+       await widget.store.setMultiSources(const []);
++      if (!mounted) return;
+       _changeSource(SourceSite.byId(available.first));
+       return;
+     }
+@@ -602,6 +634,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+     }
+   }
+ 
++  /// 电视搜索的「热门搜索」词（0.8.3）。
++  ///
++  /// 取当前剧库里**真实存在**的片名，而不是写死的营销词——
++  /// 无输入法的盒子上，用户点一下就能搜到眼前这部；写死的词很可能搜不到东西，
++  /// 点了等于白点。
++  List<String> get _televisionHotSearches {
++    final seen = <String>{};
++    final result = <String>[];
++    for (final drama in _items) {
++      final title = drama.title.trim();
++      if (title.isEmpty || !seen.add(title)) continue;
++      result.add(title);
++      if (result.length >= 10) break;
++    }
++    return result;
++  }
++
+   Future<void> _televisionSearch() async {
+     final query = await showDialog<String>(
+       context: context,
+@@ -613,6 +662,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+             ? '搜索${_group.name}短剧'
+             : '筛选当前已加载短剧',
+         recentSearches: widget.store.recentSearches,
++        hotSearches: _televisionHotSearches,
+         onCancel: () => unawaited(widget.repository.cancelSuggestions()),
+         suggestions: _searchSuggestions ? widget.repository.suggestions : null,
+       ),
+@@ -622,14 +672,44 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+     }
+   }
+ 
+-  void _televisionBack() {
++  /// 电视返回键（0.8.1）。
++  ///
++  /// 逐层退让，最后才问"是否退出应用"：
++  /// 选择模式 → 退出选择；不在首页 → 回首页；搜索有词 → 清空搜索；
++  /// 都没有 → 弹确认框（电视上误按返回不该直接退到桌面）。
++  Future<void> _televisionBack() async {
+     if (_selectionMode) {
+       _cancelSelection();
+-    } else if (_tab != _feedIndex) {
++      return;
++    }
++    if (_tab != _feedIndex) {
+       setState(() => _tab = _feedIndex);
+-    } else if (_search.text.isNotEmpty) {
+-      _search.clear();
+-      _searchChanged('');
++      return;
++    }
++    if (_search.text.isNotEmpty || _pinyinQuery.isNotEmpty) {
++      _clearSearch();
++      return;
++    }
++    await _confirmExit();
++  }
++
++  /// 是否已弹出"退出应用"确认框（防止连续按返回叠出多个对话框）。
++  bool _exitDialogOpen = false;
++
++  Future<void> _confirmExit() async {
++    if (_exitDialogOpen || !mounted) return;
++    _exitDialogOpen = true;
++    try {
++      final exit = await showTvConfirmDialog(
++        context,
++        title: '退出$appName？',
++        message: '按「确定」退出应用，按「返回」或选「继续观看」留在应用内。',
++        confirmLabel: '退出',
++        cancelLabel: '继续观看',
++      );
++      if (exit && mounted) await SystemNavigator.pop();
++    } finally {
++      _exitDialogOpen = false;
+     }
+   }
+ 
+@@ -716,6 +796,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+     final generation = ++_generation;
+     final group = _group;
+     final query = _onlineSearch ? _search.text.trim() : '';
++    // 纯字母关键词既可能是拼音，也可能是站源本身支持的英文标题。
++    // 0.8.4 曾在这里直接 return，只过滤“浏览过的本地缓存”，导致未缓存剧目
++    // 永远搜不到，同时也误伤真正的英文搜索。现在改为双路并行：
++    // 1. 原关键词继续交给站源搜索；
++    // 2. 本地缓存额外做完整拼音 / 首字母匹配，最终在 _visible 中合并去重。
++    final pinyinQuery = isPinyinQuery(query) ? query : '';
++    _pinyinQuery = pinyinQuery;
++    _pinyinPool = pinyinQuery.isEmpty
++        ? const []
++        : _browser.cachedLibrary(group.sources.map((site) => site.id));
+     setState(() {
+       _error = null;
+       if (query.isNotEmpty) _categorySelections[group.id] = '';
+@@ -789,6 +879,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+       _items = [];
+       _hasMore = true;
+       _submittedQuery = '';
++      _pinyinQuery = '';
++      _pinyinPool = const [];
+       _error = null;
+     });
+     unawaited(
+@@ -804,6 +896,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+     _loadCategories();
+   }
+ 
++  /// 退出搜索态、回到常规首页（0.8.4）。
++  ///
++  /// 电视搜索结果页的「清除搜索」和返回键都走这里。**不走** `_searchChanged`
++  /// 那 300ms 防抖：遥控器上按一下要等三分之一秒才有反应，观感就是"没按上"。
++  void _clearSearch() {
++    _debounce?.cancel();
++    _selectionMode = false;
++    _selectedDramas.clear();
++    _search.clear();
++    setState(() {
++      _pinyinQuery = '';
++      _pinyinPool = const [];
++    });
++    if (_onlineSearch) _load();
++  }
++
+   void _searchChanged(String query) {
+     _debounce?.cancel();
+     _selectionMode = false;
+@@ -813,6 +921,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+       unawaited(_browser.cancel());
+       _loading = _loadingMore = false;
+     }
++    // 关键词被清空（用户手动删光 / 点了取消）就退出搜索态，
++    // 否则 `_pinyinQuery` 会一直把列表钉在旧结果上。
++    if (query.trim().isEmpty && _pinyinQuery.isNotEmpty) {
++      _pinyinQuery = '';
++      _pinyinPool = const [];
++    }
+     setState(() {});
+     if (_onlineSearch && query.trim().isEmpty) {
+       _debounce = Timer(const Duration(milliseconds: 300), () => _load());
+@@ -836,10 +950,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+         ),
+       );
+     }
++    // 拼音/首字母（0.8.4）：`_load` 会识别纯字母关键词，同时执行站源搜索和
++    // 本地拼音匹配，并在 `_visible` 中合并去重。
+     if (_onlineSearch) {
+       _load();
++    } else if (isPinyinQuery(_search.text)) {
++      // 不联网的站源本来就在 `_items` 里筛，这里只是把「搜索态」标出来，
++      // 好让电视切到搜索结果页——否则用户看不出搜索到底生效了没有。
++      setState(() => _pinyinQuery = _search.text.trim());
+     } else {
+-      setState(() {});
++      setState(() {
++        _pinyinQuery = '';
++        _pinyinPool = const [];
++      });
+     }
+   }
+ 
+@@ -869,6 +992,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+     );
+   }
+ 
++  /// 进入竖滑「刷剧」模式（0.8.3）。
++  ///
++  /// 电视首页是横向海报行，竖滑流改由这个独立路由承载：
++  /// 返回键回到电视首页，竖滑流内部还有一层「退出播放」确认框。
++  void _startFeed() {
++    _pauseCatalog();
++    Navigator.of(context).push(
++      MaterialPageRoute<void>(
++        builder: (_) => VerticalFeedScreen(
++          repository: widget.repository,
++          store: widget.store,
++          sources: _group.sources,
++          hongguoGenres: _feedHongguoGenres,
++          playerFactory: widget.feedPlayerFactory,
++        ),
++      ),
++    );
++  }
++
+   void _changeTab(int tab) => setState(() {
+     _tab = tab;
+     _selectionMode = false;
+@@ -1011,19 +1153,44 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+ 
+   List<Drama> get _visible {
+     final query = _search.text.trim().toLowerCase();
+-    return sortCatalog(
+-      _items.where((drama) {
+-        if (!widget.store.allowsSource(drama.source)) return false;
+-        if (_category.startsWith('local:') &&
+-            categoryName(drama.category) != _category.substring(6)) {
+-          return false;
++
++    bool allowed(Drama drama) {
++      if (!widget.store.allowsSource(drama.source)) return false;
++      if (_category.startsWith('local:') &&
++          categoryName(drama.category) != _category.substring(6)) {
++        return false;
++      }
++      if (_hideVip && drama.source == 'huangdou' && drama.vip) return false;
++      return true;
++    }
++
++    // 拼音搜索：在线站源的原始搜索结果 + 本地缓存中的拼音命中结果合并去重。
++    // 这样 `hjdnz` 能本地命中中文标题，`love` 这类纯英文关键词也不会被
++    // 错当成拼音而丢掉服务端真实结果。
++    if (_pinyinQuery.isNotEmpty) {
++      final merged = <String, Drama>{};
++      if (_onlineSearch) {
++        for (final drama in _items) {
++          if (allowed(drama)) merged['${drama.source}/${drama.id}'] = drama;
+         }
+-        if (_hideVip && drama.source == 'huangdou' && drama.vip) {
+-          return false;
++      }
++      final localPool = _onlineSearch ? _pinyinPool : _items;
++      for (final drama in localPool) {
++        if (!allowed(drama) || !matchesPinyin(drama.title, _pinyinQuery)) {
++          continue;
+         }
+-        return _onlineSearch ||
+-            query.isEmpty ||
+-            matchesDramaQuery(drama, query);
++        merged.putIfAbsent('${drama.source}/${drama.id}', () => drama);
++      }
++      return sortCatalog(merged.values, widget.store.catalogView);
++    }
++
++    return sortCatalog(
++      _items.where((drama) {
++        if (!allowed(drama)) return false;
++        if (query.isEmpty) return true;
++        // 在线搜索结果已经由站源筛选；本地站源仍按标题/描述/标签过滤。
++        if (_onlineSearch) return true;
++        return matchesDramaQuery(drama, query);
+       }),
+       widget.store.catalogView,
+     );
+@@ -1065,7 +1232,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+                 ),
+               ] else ...[
+                 // 0.7.2（XQ-0106）：首页剧类筛选入口。仅"单独红果"时可用。
+-                if (_tab == _feedIndex)
++                // 0.8.3：电视首页是海报行，剧类筛选只对竖滑流有意义，电视隐藏。
++                if (_tab == _feedIndex && !television)
+                   IconButton(
+                     key: const ValueKey('feed-genre'),
+                     tooltip: _feedGenreEnabled
+@@ -1104,7 +1272,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+                         : _openRankings,
+                     icon: const Icon(Icons.leaderboard_outlined),
+                   ),
++                  // 多选下载（0.8.3）：电视上隐藏。
++                  //
++                  // 电视只适合"挑一部看"，批量下载 20 部短剧是手机/电脑的活；
++                  // 而且选择模式的确认按钮在电视上要跨整个内容区去够，容易误触。
+                   if (!_showRecommendations &&
++                      !television &&
+                       widget.store.canDownload &&
+                       widget.repository.supportsDownloads)
+                     IconButton(
+@@ -1233,12 +1406,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+                       value: 'settings',
+                       child: Text('设置与备份'),
+                     ),
+-                    // 「界面模式」入口已隐藏（0.2.26）。
++                    // 「界面模式」入口（0.8.0 恢复）。
+                     //
+-                    // 用户要求：下个版本仅保留手机版，暂停 TV 版。
+-                    // 该入口用于手动在「自动/电视/手机」之间切换显示模式，
+-                    // 隐藏后应用统一按手机版渲染（相关 TV 代码保留，不删除，
+-                    // 便于日后恢复；见 JC-0002 与项目决策记录）。
++                    // 0.2.26 曾隐藏此入口并强制手机版渲染；现恢复 TV 版，
++                    // 需要保留手动切换能力：部分电视盒子（定制 launcher、
++                    // 投影仪、模拟器）不会上报 leanback / television，
++                    // 自动识别失效时用户可在这里强制切到「电视 / 遥控器」。
++                    const PopupMenuItem(value: 'display', child: Text('界面模式')),
+                     const PopupMenuItem(
+                       value: 'about',
+                       child: Text('关于$appName'),
+@@ -1277,7 +1451,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+                                 icon: entry.$2.$1,
+                                 selected: _tab == entry.$1,
+                                 autofocus: entry.$1 == 0,
+-                                onPressed: () => _changeTab(entry.$1),
++                                onPressed: () {
++                                  // 电视没有"双击标签"这个手势：
++                                  // 已经在首页时再按一次「首页」= 刷新剧库（0.8.3）。
++                                  if (_tab == entry.$1) {
++                                    if (entry.$1 == _feedIndex &&
++                                        widget.store.sources.isNotEmpty) {
++                                      _refreshCatalog();
++                                    }
++                                    return;
++                                  }
++                                  _changeTab(entry.$1);
++                                },
+                               ),
+                             ),
+                         ],
+@@ -1338,18 +1523,46 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+                   child: IndexedStack(
+                     index: _tab,
+                     children: [
+-                      // 首页：竖滑流。
+-                      VerticalFeedScreen(
+-                        repository: widget.repository,
+-                        store: widget.store,
+-                        embedded: true,
+-                        sources: _group.sources,
+-                        hongguoGenres: _feedHongguoGenres,
+-                        playerFactory: widget.feedPlayerFactory,
+-                        refreshSignal: _feedRefresh,
+-                        onReady: widget.onFeedReady,
+-                        active: _tab == _feedIndex,
+-                      ),
++                      // 首页（0.8.3）：电视和手机是两个完全不同的东西。
++                      //
++                      // 手机：竖滑短视频流（刷到就播，上下滑换剧）。
++                      // 电视：横向海报行（继续观看 / 热门 / 分类），
++                      //       竖滑流降级为「开始刷剧」按钮推进去的独立页面。
++                      //
++                      // 为什么不在电视上继续用竖滑流：遥控器上下键只能"下一部"，
++                      // 用户既看不到剧库里有什么，也回不到刚才看过的那部；
++                      // 而且一进应用就自动播，电视上很吵。
++                      television
++                          ? TvHomeScreen(
++                              repository: widget.repository,
++                              items: _visible,
++                              history: widget.store.history,
++                              loading: _loading,
++                              searchQuery: _pinyinQuery,
++                              onClearSearch: _clearSearch,
++                              emptyMessage: widget.store.sources.isEmpty
++                                  ? '暂无可用站源，请联系管理员开放'
++                                  : null,
++                              onOpen: _openDrama,
++                              onResume: (entry) =>
++                                  _openDrama(entry.drama, resume: true),
++                              onStartFeed: _startFeed,
++                              onBrowse: () => _changeTab(_discoverIndex),
++                              onSearch: () => unawaited(_televisionSearch()),
