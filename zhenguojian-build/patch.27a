@@ -1,0 +1,79 @@
++    _showControls();
++  }
++
++  /// 是否因"退出确认框"暂停过播放（0.8.1）。
++  bool _dialogPaused = false;
++
++  /// 弹出 / 关闭确认框时暂停、恢复播放（0.8.1）。
++  ///
++  /// 只暂停本来就在播的视频；恢复也只针对本次暂停，
++  /// 不会把用户自己按的暂停改成播放。
++  /// 同时维护 `_userPaused`，避免健康检查把这次暂停当成"卡住"而自动恢复。
++  void _setPausedForDialog(bool paused) {
++    final player = _player;
++    if (player == null || _closed) return;
++    if (paused) {
++      if (_dialogPaused) return;
++      _dialogPaused = player.state.playing;
++      if (_dialogPaused) {
++        _userPaused = true;
++        unawaited(player.pause());
++      }
++      return;
++    }
++    if (!_dialogPaused) return;
++    _dialogPaused = false;
++    _userPaused = false;
++    unawaited(player.play());
++  }
++
+   void _tap() {
+     if (_interactions?.suppressTap ?? false) return;
+     // 用户点了画面 → 解除自动连播静默，这次点击要能看到效果。
+@@ -2926,6 +3353,22 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+             ].join(','),
+           );
+           await platform.setProperty('network-timeout', '20');
++          // 解码方式（0.8.3）。
++          //
++          // 弱 GPU / 硬解不完整的电视盒子上，libmpv 用 `auto-safe` 选到
++          // 一个坏掉的 MediaCodec 时，表现是**有声音没画面 / 绿屏 / 纯黑**，
++          // 而应用侧一切正常（`playing == true`，只是永远拿不到帧尺寸）。
++          // 这里显式下发给 libmpv：
++          // - 正常：`auto-safe`（libmpv 只在"已知安全"的硬解上启用，
++          //   失败会自动回退软解，比 `auto` 稳）；
++          // - 兼容模式 / 自动降级后：`no`（纯软件解码，一定能出画面）。
++          //
++          // 必须在 `open()` 之前设置，播放中途改这个属性不会重建解码器。
++          try {
++            await platform.setProperty('hwdec', _softwareDecode ? 'no' : 'auto-safe');
++          } catch (_) {
++            // 忽略：个别平台的 libmpv 版本不认这个属性，不影响播放。
++          }
+           // 弱网缓冲策略（0.5.0）。
+           //
+           // 背景：用户实测"开 VPN 就卡"，根因是视频请求全部绕道代理节点
+@@ -3162,9 +3605,10 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+             _displayTitle,
+             maxLines: 1,
+             overflow: TextOverflow.ellipsis,
+-            style: const TextStyle(
++            style: TextStyle(
+               color: Colors.white,
+-              fontSize: 17,
++              // 0.8.1：电视上标题放大。
++              fontSize: _television ? 21 : 17,
+               fontWeight: FontWeight.bold,
+             ),
+           ),
+@@ -3439,12 +3883,19 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+     Key? key,
+   }) {
+     const accent = Color(0xFFFF765F);
+-    return InkWell(
++    // 0.8.2：原来的 InkWell 在电视上没有焦点环，遥控器停在 chip 上完全看不出来，
++    // 甚至无法用方向键在选项间移动（InkWell 不参与焦点遍历）。
++    // 换成 RemoteTarget：焦点环 + 外发光 + 1.03 放大，并让当前项自动获得焦点。
++    return RemoteTarget(
+       key: key,
+-      onTap: onTap,
