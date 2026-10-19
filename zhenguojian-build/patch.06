@@ -1,0 +1,452 @@
++              color: colors.onPrimary,
++            )
++          : null,
+     );
+   }
+-}
+\ No newline at end of file
++
++  /// 全选 / 清空：TV 上同样要能聚焦，所以 TV 用 RemoteTarget，
++  /// 手机沿用 TextButton（触屏不需要焦点环，也省一点宽度）。
++  Widget _quickAction({
++    required Key key,
++    required String label,
++    required VoidCallback onPressed,
++  }) {
++    final tv = _tv;
++    if (!tv) {
++      return TextButton(key: key, onPressed: onPressed, child: Text(label));
++    }
++    final colors = Theme.of(context).colorScheme;
++    return RemoteTarget(
++      key: key,
++      onPressed: onPressed,
++      label: label,
++      child: Padding(
++        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
++        child: Text(
++          label,
++          style: TextStyle(
++            fontSize: 16,
++            fontWeight: FontWeight.w700,
++            color: colors.primary,
++          ),
++        ),
++      ),
++    );
++  }
++
++  Widget _sheetButton({
++    required Key key,
++    required String label,
++    required bool tv,
++    required VoidCallback onPressed,
++    bool filled = false,
++  }) {
++    if (!tv) {
++      final child = Text(label);
++      return filled
++          ? FilledButton(key: key, onPressed: onPressed, child: child)
++          : OutlinedButton(key: key, onPressed: onPressed, child: child);
++    }
++    final colors = Theme.of(context).colorScheme;
++    return RemoteTarget(
++      key: key,
++      onPressed: onPressed,
++      label: label,
++      child: Container(
++        height: 52,
++        alignment: Alignment.center,
++        decoration: BoxDecoration(
++          color: filled ? colors.primary : colors.surfaceContainerHighest,
++          borderRadius: BorderRadius.circular(12),
++          border: filled
++              ? null
++              : Border.all(color: colors.outlineVariant, width: 1),
++        ),
++        child: Text(
++          label,
++          style: TextStyle(
++            fontSize: 18,
++            fontWeight: FontWeight.w700,
++            color: filled ? colors.onPrimary : colors.onSurface,
++          ),
++        ),
++      ),
++    );
++  }
++}
+diff --git a/lib/local_store.dart b/lib/local_store.dart
+index 652e0dd..7fe5d6e 100644
+--- a/lib/local_store.dart
++++ b/lib/local_store.dart
+@@ -180,27 +180,21 @@ class LocalStore extends ChangeNotifier {
+       isFavorite(id) ? _followStates[id] : null;
+   bool get hideVip =>
+       _configurationError == null ? _bool(_key('hideVip')) ?? true : true;
+-  String get displayMode {
+-    // 0.2.26：仅保留手机版，暂停 TV 版（用户要求）。
+-    //
+-    // 历史上「界面模式」允许在 自动/电视/手机 之间切换，电视模式会启用
+-    // 遥控器导航、遥控按钮、TV 主题等一整套界面。下个版本只做手机版，
+-    // 因此这里**统一强制返回 standard（手机/电脑）**：
+-    // - 无论设备是否为电视、无论历史配置是什么，都按手机版渲染；
+-    // - readDisplayMode 保留原始值读取能力，便于日后恢复 TV 版；
+-    // - TV 相关代码全部保留，不删除（JC-0002）。
+-    return 'standard';
+-  }
+-
+-  /// 原始「界面模式」配置值（0.2.26 新增，仅供日后恢复 TV 版使用）。
++  /// 界面模式：`auto` 按设备自动识别、`television` 强制电视布局、
++  /// `standard` 强制手机/电脑布局。
+   ///
+-  /// 与 [displayMode] 不同：本方法返回用户/设备实际存储的值，
+-  /// 不做"仅手机版"的强制转换。
+-  String get storedDisplayMode {
++  /// 0.8.0 恢复 TV 版：0.2.26 曾在此**统一强制返回 standard**，
++  /// 导致电视设备即使被原生层识别为 television，也拿不到遥控布局
++  /// （侧边导航、焦点主题、电视网格全部失效）。现在恢复为读取真实配置，
++  /// 未配置时默认 `auto`，由 `AppDevice.detect()` 的结果决定是否电视布局。
++  String get displayMode {
+     final value = _configurationError == null ? _string('displayMode') : null;
+     return {'auto', 'television', 'standard'}.contains(value) ? value! : 'auto';
+   }
+ 
++  /// 已存储的「界面模式」原始值（与 [displayMode] 相同，保留旧调用点）。
++  String get storedDisplayMode => displayMode;
++
+   String get themeMode {
+     final value = _configurationError == null ? _string('themeMode') : null;
+     return {'light', 'dark', 'system'}.contains(value) ? value! : 'system';
+@@ -219,6 +213,19 @@ class LocalStore extends ChangeNotifier {
+   /// 默认 **false**（用户明确要求：用流量时不自动播放）。
+   /// 关闭时首页刷到新剧只加载首帧，需用户点一下才开始播；Wi-Fi / 有线不受影响。
+   bool get autoPlayOnMobile => !locked && (_bool('autoPlayOnMobile') ?? false);
++
++  /// 电视兼容模式（0.8.3）：强制走**软件解码**。
++  ///
++  /// 背景：部分电视盒子 / 投影仪的硬件解码器（MediaCodec）不完整，
++  /// libmpv 用 `hwdec=auto-safe` 时会"有声音没画面""绿屏""纯黑"，
++  /// 且应用侧拿不到任何错误——`playing` 是 true，只是出不来帧。
++  /// 打开后播放器改用 `hwdec=no`（纯 CPU 解码），代价是 4K 会更吃性能，
++  /// 1080p 短剧基本无感。
++  ///
++  /// 默认关闭：正常设备用硬解更省电、更流畅。
++  /// 播放页还有一层自动降级（连续两次拿不到首帧时自动切软解），
++  /// 这里只是给用户一个"手动强制"的开关。
++  bool get tvCompatMode => !locked && (_bool(_key('tvCompatMode')) ?? false);
+   String get source {
+     if (locked) return '';
+     final value = _string(_key('source')) ?? '';
+@@ -404,6 +411,9 @@ class LocalStore extends ChangeNotifier {
+       _setting('autoUpdateCatalog', value, admin: true);
+   Future<void> setAutoPlayOnMobile(bool value) =>
+       _setting('autoPlayOnMobile', value);
++  /// 电视兼容模式开关（0.8.3）。
++  Future<void> setTvCompatMode(bool value) =>
++      _setting(_key('tvCompatMode'), value);
+   Future<void> setHideVip(bool value) => _setting(_key('hideVip'), value);
+   Future<void> setSource(String value) {
+     if (!allowsSource(value)) return Future.error(StateError('当前用户没有此站源权限'));
+diff --git a/lib/main.dart b/lib/main.dart
+index 0ec33ff..306de28 100644
+--- a/lib/main.dart
++++ b/lib/main.dart
+@@ -249,19 +249,23 @@ class DuanjuApp extends StatelessWidget {
+             version: version,
+             child: Theme(
+               data: tv ? televisionTheme(theme) : theme,
+-              child: Shortcuts(
+-                shortcuts: const {
+-                  SingleActivator(
+-                    LogicalKeyboardKey.select,
+-                    includeRepeats: false,
+-                  ): ActivateIntent(),
+-                  SingleActivator(
+-                    LogicalKeyboardKey.gameButtonA,
+-                    includeRepeats: false,
+-                  ): ActivateIntent(),
+-                  SingleActivator(LogicalKeyboardKey.goBack): DismissIntent(),
+-                },
+-                child: FocusTraversalGroup(child: child!),
++              child: Padding(
++                // 电视过扫描安全边距（0.8.0）：只在电视模式下生效。
++                padding: tv ? AppLayout.overscan : EdgeInsets.zero,
++                child: Shortcuts(
++                  shortcuts: const {
++                    SingleActivator(
++                      LogicalKeyboardKey.select,
++                      includeRepeats: false,
++                    ): ActivateIntent(),
++                    SingleActivator(
++                      LogicalKeyboardKey.gameButtonA,
++                      includeRepeats: false,
++                    ): ActivateIntent(),
++                    SingleActivator(LogicalKeyboardKey.goBack): DismissIntent(),
++                  },
++                  child: FocusTraversalGroup(child: child!),
++                ),
+               ),
+             ),
+           ),
+diff --git a/lib/pinyin.dart b/lib/pinyin.dart
+new file mode 100644
+index 0000000..e5f116f
+--- /dev/null
++++ b/lib/pinyin.dart
+@@ -0,0 +1,165 @@
++import 'package:pinyin/pinyin.dart';
++
++/// TV 端拼音搜索工具。
++///
++/// 使用纯 Dart 的 `pinyin` 词库，不依赖 Python、系统输入法或 Android 原生 API。
++/// 词组优先转换，因此「重生」「重庆」「长安」这类多音字场景比逐字码表准确。
++///
++/// 搜索同时支持：
++/// - 首字母：`hjdnz` -> 「黄金大逆转」；
++/// - 首字母模糊缩写：`hdz` -> 「黄金大逆转」；
++/// - 完整/部分全拼：`huangjin` / `huangjindanzhuan`；
++/// - 大小写混输。
++const int _maxCacheEntries = 4000;
++final Map<String, _PinyinKey> _cache = <String, _PinyinKey>{};
++
++class _PinyinKey {
++  const _PinyinKey({
++    required this.initials,
++    required this.full,
++    required this.singleCharInitials,
++  });
++
++  /// 词组感知的首字母，例如「重生」-> `cs`。
++  final String initials;
++
++  /// 词组感知的完整拼音，例如「黄金大逆转」-> `huangjindanzhuan`。
++  final String full;
++
++  /// 逐字首选读音的首字母，仅作为旧行为兼容兜底。
++  ///
++  /// 旧版使用逐字码表，多音字可能得到另一种读音，例如「重生」可能是 `zs`。
++  /// 保留这个键可以避免升级后用户原来的遥控器输入习惯突然失效。
++  final String singleCharInitials;
++}
++
++bool _isAsciiLetter(int unit) =>
++    (unit >= 0x41 && unit <= 0x5a) || (unit >= 0x61 && unit <= 0x7a);
++
++bool _isAsciiDigit(int unit) => unit >= 0x30 && unit <= 0x39;
++
++/// 只保留 ASCII 字母和数字并转成小写。
++///
++/// pinyin 包会原样保留标点和非汉字内容；搜索键不需要这些字符。
++String _compactAscii(String value) {
++  final buffer = StringBuffer();
++  for (final unit in value.codeUnits) {
++    if (_isAsciiLetter(unit)) {
++      buffer.writeCharCode(unit >= 0x41 && unit <= 0x5a ? unit + 0x20 : unit);
++    } else if (_isAsciiDigit(unit)) {
++      buffer.writeCharCode(unit);
++    }
++  }
++  return buffer.toString();
++}
++
++String _singleCharInitials(String text) {
++  final buffer = StringBuffer();
++  for (final rune in text.runes) {
++    if (rune < 0x80) {
++      if (_isAsciiLetter(rune) || _isAsciiDigit(rune)) {
++        buffer.writeCharCode(
++          rune >= 0x41 && rune <= 0x5a ? rune + 0x20 : rune,
++        );
++      }
++      continue;
++    }
++
++    final char = String.fromCharCode(rune);
++    if (!ChineseHelper.isChinese(char)) continue;
++    final values = PinyinHelper.convertToPinyinArray(
++      char,
++      PinyinFormat.WITHOUT_TONE,
++    );
++    if (values.isNotEmpty && values.first.isNotEmpty) {
++      buffer.write(values.first[0].toLowerCase());
++    }
++  }
++  return buffer.toString();
++}
++
++_PinyinKey _keyOf(String text) {
++  final cached = _cache[text];
++  if (cached != null) return cached;
++
++  // getShortPinyin / getPinyin 都会优先使用词组字典处理多音字。
++  final initials = _compactAscii(PinyinHelper.getShortPinyin(text));
++  String full;
++  try {
++    full = _compactAscii(
++      PinyinHelper.getPinyin(
++        text,
++        separator: '',
++        format: PinyinFormat.WITHOUT_TONE,
++      ),
++    );
++  } on PinyinException {
++    // 极少数扩展区汉字不在词库中时，不让搜索因为一个标题崩掉。
++    // 首字母仍可用；全拼退化为空串。
++    full = '';
++  }
++
++  final key = _PinyinKey(
++    initials: initials,
++    full: full,
++    singleCharInitials: _singleCharInitials(text),
++  );
++  if (_cache.length >= _maxCacheEntries) _cache.clear();
++  _cache[text] = key;
++  return key;
++}
++
++/// 把文本转换成词组感知的拼音首字母串。
++///
++/// 汉字按实际词组读音转换；ASCII 字母/数字保留并转小写；标点和 emoji 丢弃。
++String pinyinInitials(String text) => _keyOf(text).initials;
++
++/// 把文本转换成不带声调、无分隔符的完整拼音。
++String pinyinFull(String text) => _keyOf(text).full;
++
++/// 关键词是否适合作为拼音搜索词。
++///
++/// 只认 2–48 个 ASCII 字母。上限放宽到 48 是为了支持完整拼音，旧版 12 个字符
++/// 会把稍长的全拼误判成普通英文搜索。
++bool isPinyinQuery(String query) {
++  final value = query.trim();
++  if (value.length < 2 || value.length > 48) return false;
++  for (final unit in value.codeUnits) {
++    if (!_isAsciiLetter(unit)) return false;
++  }
++  return true;
++}
++
++bool _isSubsequence(String haystack, String needle) {
++  var from = 0;
++  for (var i = 0; i < needle.length; i++) {
++    final found = haystack.indexOf(needle[i], from);
++    if (found < 0) return false;
++    from = found + 1;
++  }
++  return true;
++}
++
++/// [query] 是否按拼音命中 [text]。
++///
++/// 优先做精确度更高的全拼和首字母包含匹配，最后才使用首字母子序列模糊匹配。
++/// 例如 `hjdnz`、`hdz`、`huangjin` 都能命中「黄金大逆转」。
++bool matchesPinyin(String text, String query) {
++  if (!isPinyinQuery(query)) return false;
++  final needle = query.trim().toLowerCase();
++  final key = _keyOf(text);
++  if (key.initials.isEmpty && key.full.isEmpty) return false;
++
++  if (key.initials.contains(needle) || key.full.contains(needle)) return true;
++  if (_isSubsequence(key.initials, needle)) return true;
++
++  // 兼容旧版逐字码表对多音字形成的首字母，避免升级后历史输入习惯失效。
++  final legacy = key.singleCharInitials;
++  return legacy.isNotEmpty &&
++      (legacy.contains(needle) || _isSubsequence(legacy, needle));
++}
++
++/// 兼容 0.8.4 已有调用名。
++@Deprecated('Use matchesPinyin instead.')
++bool matchesPinyinInitials(String text, String query) =>
++    matchesPinyin(text, query);
+diff --git a/lib/player_controls.dart b/lib/player_controls.dart
+deleted file mode 100644
+index 046be8a..0000000
+--- a/lib/player_controls.dart
++++ /dev/null
+@@ -1,497 +0,0 @@
+-import 'dart:async';
+-
+-import 'package:flutter/material.dart';
+-import 'package:media_kit/media_kit.dart';
+-
+-import 'player_interactions.dart';
+-import 'playback_buffer.dart';
+-import 'widgets.dart';
+-import 'lan_screen.dart';
+-
+-class PlayerControls extends StatefulWidget {
+-  const PlayerControls({
+-    super.key,
+-    required this.player,
+-    required this.interactions,
+-    required this.enabled,
+-    required this.fullscreen,
+-    required this.onFullscreen,
+-    required this.onPrevious,
+-    required this.onNext,
+-    required this.title,
+-    required this.onTogglePlayback,
+-    required this.onEpisodes,
+-    required this.onSettings,
+-    required this.onSpeed,
+-    required this.onQuality,
+-    required this.speed,
+-    required this.qualityLabel,
+-    required this.onFocusSurface,
+-    this.swipeEnabled = false,
+-    this.panelOpen = false,
+-    this.onSeek,
+-    this.onPush,
+-  });
+-
+-  final Player player;
+-  final PlayerInteractions interactions;
+-  final bool enabled;
+-  final bool fullscreen;
+-  final VoidCallback onFullscreen;
+-  final VoidCallback? onPrevious;
+-  final VoidCallback? onNext;
+-  final String title;
+-  final VoidCallback onTogglePlayback;
+-  final Future<void> Function() onEpisodes;
+-  final Future<void> Function() onSettings;
+-  final Future<void> Function() onSpeed;
+-  final Future<void> Function() onQuality;
+-  final double speed;
+-  final String qualityLabel;
+-  final VoidCallback onFocusSurface;
+-  final bool swipeEnabled;
+-  final bool panelOpen;
+-  final Future<void> Function(Duration)? onSeek;
+-  final Future<void> Function()? onPush;
+-
+-  @override
+-  State<PlayerControls> createState() => _PlayerControlsState();
+-}
+-
+-class _PlayerControlsState extends State<PlayerControls> {
+-  final List<StreamSubscription<dynamic>> _subscriptions = [];
+-  Timer? _hideTimer;
+-  bool _visible = true;
+-  double? _seekValue;
+-
+-  @override
+-  void initState() {
+-    super.initState();
+-    for (final stream in [
+-      widget.player.stream.position,
+-      widget.player.stream.duration,
+-      widget.player.stream.buffer,
+-      widget.player.stream.playing,
+-      widget.player.stream.buffering,
+-      widget.player.stream.volume,
+-    ]) {
+-      _subscriptions.add(
+-        stream.listen((_) {
+-          if (mounted) setState(() {});
+-        }),
+-      );
+-    }
+-    _subscriptions.add(widget.player.stream.playing.listen((_) => _show()));
