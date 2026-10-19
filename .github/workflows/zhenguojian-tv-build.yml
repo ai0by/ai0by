@@ -31,8 +31,8 @@ jobs:
           git checkout c934d1e2aa4f59c6ef93813ba63cd9376cbb159e
           git apply --check /tmp/zhenguojian.patch
           git apply /tmp/zhenguojian.patch
-          git apply --check "$carrier/zhenguojian-build/pinyin-spelling-correction.patch"
-          git apply "$carrier/zhenguojian-build/pinyin-spelling-correction.patch"
+          sed -i 's/huangjindanzhuan/huangjindanizhuan/g' lib/pinyin.dart test/pinyin_test.dart
+          test "$(grep -Roc 'huangjindanzhuan' lib/pinyin.dart test/pinyin_test.dart | awk -F: '{s+=$2} END {print s+0}')" = "0"
           grep -q '^version: 0.8.4+79$' pubspec.yaml
           grep -q 'pinyin: ^3.3.0' pubspec.yaml
           grep -q "pinyinFull('黄金大逆转'), 'huangjindanizhuan'" test/pinyin_test.dart
