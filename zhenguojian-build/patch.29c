@@ -1,0 +1,5 @@
++    libraries = ['libduanju_core.so', 'libflutter.so', 'libapp.so', 'libmpv.so', 'libffmpegkit.so']
++
++    def verify_android_apk(source, required_abis):
+         if not source.is_file():
+             raise SystemExit('缺少 APK：' + str(source))
