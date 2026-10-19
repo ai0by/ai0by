@@ -1,0 +1,68 @@
+-      borderRadius: BorderRadius.circular(10),
++      onPressed: onTap,
++      accent: accent,
++      selected: selected,
++      autofocus: selected && _television,
++      label: '$label${selected ? '，当前选项' : ''}',
+       child: AnimatedContainer(
+         duration: const Duration(milliseconds: 140),
++        alignment: Alignment.center,
+         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+         decoration: BoxDecoration(
+           color: selected ? accent : const Color(0xFF26272F),
+@@ -3455,6 +3906,8 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+         ),
+         child: Text(
+           label,
++          maxLines: 1,
++          overflow: TextOverflow.ellipsis,
+           style: TextStyle(
+             color: selected ? Colors.white : const Color(0xFFB9B6C2),
+             fontSize: 14,
+@@ -3595,6 +4048,16 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+         gridController.position.maxScrollExtent,
+       );
+       gridController.jumpTo(target);
++      // 电视（0.8.3）：跳完再要焦点。
++      //
++      // 原来只靠 `autofocus`：当前集在视口外时，autofocus 那一刻它**还没被构建**，
++      // 焦点落空 → 遥控器打开选集后方向键完全无效，只能按返回。
++      // 现在先跳到当前集所在行，等它构建出来再显式请求焦点。
++      WidgetsBinding.instance.addPostFrameCallback((_) {
++        if (_television && _episodeCurrentFocus.context != null) {
++          _episodeCurrentFocus.requestFocus();
++        }
++      });
+     });
+     final value = await showModalBottomSheet<int>(
+       context: context,
+@@ -3620,10 +4083,16 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+             itemBuilder: (context, index) {
+               final selected = index == _episodeIndex;
+               const accent = Color(0xFFFF765F);
+-              return InkWell(
++              // 0.8.2：InkWell 在电视上不可聚焦 —— 遥控器打开选集后
++              // 一格都选不了，等于卡死在弹层里。改用 RemoteTarget。
++              return RemoteTarget(
+                 key: ValueKey('episode-$index'),
+-                onTap: () => Navigator.pop(context, index),
+-                borderRadius: BorderRadius.circular(10),
++                onPressed: () => Navigator.pop(context, index),
++                accent: accent,
++                selected: selected,
++                focusNode: index == currentIndex ? _episodeCurrentFocus : null,
++                label:
++                    '第 ${episodes[index].number} 集${selected ? '，正在播放' : ''}',
+                 child: Container(
+                   alignment: Alignment.center,
+                   decoration: BoxDecoration(
+@@ -3692,6 +4161,9 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+         defaultTargetPlatform == TargetPlatform.android ||
+         defaultTargetPlatform == TargetPlatform.iOS;
+     if (!mobile) return;
++    // 电视（0.8.0）：电视本身就是横向设备，锁方向只会让部分盒子把画面
++    // 压成竖条 / 黑边翻倍；全屏与否只切全屏路由，不动方向与系统栏。
++    if (_television) return;
+     try {
+       // 横屏视频在全屏时切到横向；竖屏视频保持竖向，仅隐藏系统栏。
+       final wide = _aspectRatio <= 0 || _wideVideo;
