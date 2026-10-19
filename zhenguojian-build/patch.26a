@@ -1,0 +1,77 @@
++        togglePlayback: _togglePlayback,
++        seekBy: _seekBy,
++        openEpisodes: () => unawaited(_openEpisodes()),
++        holdStart: _holdStartForRemote,
++        holdEnd: _holdEndForRemote,
++        setPaused: _setPausedForDialog,
++      );
++      _reportedActions = actions;
++      widget.onRemoteActions?.call(actions);
++    });
+     if (widget.active) _prepare();
+   }
+ 
++  @override
++  void didChangeDependencies() {
++    super.didChangeDependencies();
++    _television = AppLayout.isTelevision(context);
++  }
++
+   /// 播放器操作串行队列（0.3.1）。
+   ///
+   /// 把操作挂到同一条 Future 链上，前一个失败也不影响后续执行
+@@ -1682,6 +1963,35 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+     await _prepare(force: true);
+   }
+ 
++  /// 自动降级到软件解码（0.8.3）。
++  ///
++  /// 判定时机：健康检查连续两轮"拿不到画面帧"——分别是
++  /// 「open 之后迟迟不起播」和「报告在播但没有视频帧尺寸」两条兜底。
++  /// 这两条在网络正常时几乎不会同时出现，一旦反复出现，
++  /// 最可能的原因就是硬解选到了坏解码器（弱 GPU 盒子 / 老投影仪的典型症状）。
++  ///
++  /// 返回 true 表示本次已经接管恢复流程（调用方不要再走 `_recover()`）。
++  bool _escalateDecode() {
++    if (_softwareDecode || _decodeEscalations >= 1) return false;
++    // 只在电视上自动降级：手机端软解更费电，而且这类盒子问题手机很少见。
++    // 用户显式打开「电视兼容模式」时 `_softwareDecode` 已经是 true，
++    // 会走不到这里，所以不需要额外判断设置。
++    if (!_television) return false;
++    if (_closed || _playerReleased || !widget.active || !_foreground) {
++      return false;
++    }
++    _decodeEscalations++;
++    _softwareDecode = true;
++    // 记录续播点：降级要重建解码器，必须从当前位置接着放。
++    _resumeFrom = _player?.state.position ?? Duration.zero;
++    _health.reset();
++    _firstFrameTicks = 0;
++    _noFrameTicks = 0;
++    if (mounted && !_closed) _toast('画面解码异常，已改用软件解码重试');
++    unawaited(_prepare(force: true));
++    return true;
++  }
++
+   /// 自动恢复（0.6.0，迁移自老播放器）。
+   ///
+   /// 触发条件：健康检查判定"播放中但位置长时间不前进"。
+@@ -1993,6 +2303,8 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+       }
+       final current = _player;
+       if (current == null) return;
++      // 有画面且在播 → 解码是好的，清掉"解码异常"的累计次数（0.8.3）。
++      if (_hasVideoFrame && current.state.playing) _decodeStalls = 0;
+       // 兜底一：地址已交出但迟迟不起播（弱网 / 服务端迟迟不给数据）。
+       if (_awaitingFirstFrame &&
+           _foreground &&
+@@ -2003,6 +2315,9 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+           // 重置计数：若这次恢复也没能起播，下一轮仍会再试
+           // （总次数由 `_recovery` 限制，超过后会转为显示"点击重试"）。
+           _firstFrameTicks = 0;
++          // 连续两轮起不来 → 先怀疑硬解（0.8.3），别急着切备用线路。
++          _decodeStalls++;
++          if (_decodeStalls >= 2 && _escalateDecode()) return;
+           unawaited(_recover());
+           return;
+         }
