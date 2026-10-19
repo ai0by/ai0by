@@ -1,0 +1,54 @@
++    if (_closed) return;
++    _showControls();
++    WidgetsBinding.instance.addPostFrameCallback((_) {
++      if (!mounted || _closed) return;
++      // 加载失败时"播放"按钮没有意义，焦点直接给"重试"。
++      if (_error != null) {
++        _retryFocus.requestFocus();
++      } else {
++        _playFocus.requestFocus();
++      }
++    });
++  }
++
++  /// 电视遥控"返回"键：控件可见/有焦点时先收起，返回是否已处理（0.8.0）。
++  bool _hideControlsForRemote() {
++    if (_closed) return false;
++    if (!_controlsVisible && !_controlsScope.hasFocus) return false;
++    _hideTimer?.cancel();
++    if (_controlsVisible) {
++      setState(() => _controlsVisible = false);
++      _refreshFullscreen(immediate: true);
++    }
++    // 焦点还给竖滑流，否则遥控器上下键（切剧）会失效。
++    widget.onReturnFocus?.call();
++    return true;
++  }
++
++  /// 遥控长按「确定」：进入 3 倍速（0.8.3）。
++  ///
++  /// 电视没有"按住屏幕"这个手势，长按确定是最接近的等价物。
++  /// 具体计时、倍速设置与提示都由 [PlayerInteractions] 统一处理，
++  /// 这里只做页面级守卫（已关闭 / 未就绪时忽略）。
++  void _holdStartForRemote() {
++    if (_closed || _loading || _error != null) return;
++    _interactions?.holdStart();
++  }
++
++  /// 遥控松开「确定」：恢复原倍速（0.8.3）。
++  void _holdEndForRemote() {
++    _interactions?.holdEnd();
++  }
++
++  /// 遥控左右键快进/快退（0.8.0）。[seconds] 为负表示后退。
++  void _seekBy(int seconds) {
++    final player = _player;
++    if (player == null || _closed || _loading) return;
++    final duration = player.state.duration;
++    if (duration <= Duration.zero) return;
++    final target = (player.state.position.inMilliseconds + seconds * 1000)
++        .clamp(0, duration.inMilliseconds);
++    unawaited(_seekTo(Duration(milliseconds: target)));
++    _interactions?.hint(
++      '${seconds > 0 ? '快进至' : '后退至'} ${formatPosition(target / 1000)}',
++    );
