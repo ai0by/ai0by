@@ -1,0 +1,92 @@
+       await tester.tap(find.byKey(const ValueKey('source-switch')));
+       await tester.pumpAndSettle();
++      // 0.8.2：站源弹窗是「勾选 + 确定」语义。
++      // 先清空再勾选目标分组，才能得到"只选这一个源"的等价结果。
++      await tester.tap(find.byKey(const ValueKey('source-sheet-clear')));
++      await tester.pumpAndSettle();
+       await tester.tap(find.text(name).last);
+       await tester.pumpAndSettle();
++      await tester.tap(find.byKey(const ValueKey('source-sheet-confirm')));
++      await tester.pumpAndSettle();
+     }
+ 
+     for (final group in SourceGroup.fromSources(SourceSite.values)) {
+diff --git a/test/pinyin_test.dart b/test/pinyin_test.dart
+new file mode 100644
+index 0000000..8f869cd
+--- /dev/null
++++ b/test/pinyin_test.dart
+@@ -0,0 +1,113 @@
++import 'package:duanju_app/catalog_sort.dart';
++import 'package:duanju_app/models.dart';
++import 'package:duanju_app/pinyin.dart';
++import 'package:flutter_test/flutter_test.dart';
++
++Drama drama(
++  String title, {
++  String description = '',
++  List<String> tags = const [],
++}) => Drama(
++  id: title,
++  source: 'hongguo',
++  title: title,
++  description: description,
++  tags: tags,
++);
++
++void main() {
++  group('pinyin keys', () {
++    test('词组感知首字母与全拼', () {
++      expect(pinyinInitials('黄金大逆转'), 'hjdnz');
++      expect(pinyinFull('黄金大逆转'), 'huangjindanzhuan');
++      // 多音字应按词组实际读音处理：重生 = chong sheng。
++      expect(pinyinInitials('重生'), 'cs');
++      expect(pinyinFull('重生'), 'chongsheng');
++    });
++
++    test('ASCII 保留，标点空格 emoji 被清理', () {
++      expect(pinyinInitials('TV版'), 'tvb');
++      expect(pinyinInitials('第2季'), 'd2j');
++      expect(pinyinInitials('黄金·大逆转'), 'hjdnz');
++      expect(pinyinInitials('🔥重生 2024！'), 'cs2024');
++    });
++
++    test('空串与纯标点返回空串', () {
++      expect(pinyinInitials(''), '');
++      expect(pinyinInitials('《》【】'), '');
++    });
++  });
++
++  group('isPinyinQuery', () {
++    test('2–48 个纯字母可作为拼音', () {
++      expect(isPinyinQuery('hjdnz'), isTrue);
++      expect(isPinyinQuery('HUANGJIN'), isTrue);
++      expect(isPinyinQuery('huangjindanzhuan'), isTrue);
++      expect(isPinyinQuery('a'), isFalse);
++      expect(isPinyinQuery('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'), isFalse);
++    });
++
++    test('中文、数字、混合不算纯拼音', () {
++      expect(isPinyinQuery('黄金'), isFalse);
++      expect(isPinyinQuery('hj2'), isFalse);
++      expect(isPinyinQuery('hj dnz'), isFalse);
++      expect(isPinyinQuery(''), isFalse);
++    });
++  });
++
++  group('matchesPinyin', () {
++    test('完整首字母与缩写命中', () {
++      expect(matchesPinyin('黄金大逆转', 'hjdnz'), isTrue);
++      expect(matchesPinyin('黄金大逆转', 'hdz'), isTrue);
++    });
++
++    test('完整拼音和部分全拼命中', () {
++      expect(matchesPinyin('黄金大逆转', 'huangjin'), isTrue);
++      expect(matchesPinyin('黄金大逆转', 'huangjindanzhuan'), isTrue);
++      expect(matchesPinyin('黄金大逆转', 'HUANGJIN'), isTrue);
++    });
++
++    test('多音字使用词组读音，同时兼容旧逐字首字母', () {
++      expect(matchesPinyin('重生', 'cs'), isTrue);
++      expect(matchesPinyin('重生', 'chongsheng'), isTrue);
++      // 旧版逐字码表可能把「重」按 zhong 处理，升级后仍允许 zs。
