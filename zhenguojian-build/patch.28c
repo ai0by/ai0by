@@ -1,0 +1,32 @@
++  /// 这里改成与列表页 [RemoteTarget] 同一套语言：焦点时填 28% 主题色
++  /// + 2.5px 主题色描边。手机（非电视）返回 null，保持原样。
++  ButtonStyle? _overlayButtonStyle(BuildContext context) {
++    if (!_television) return null;
++    final colors = Theme.of(context).colorScheme;
++    return ButtonStyle(
++      backgroundColor: WidgetStateProperty.resolveWith(
++        (states) => states.contains(WidgetState.focused)
++            ? colors.primary.withValues(alpha: .28)
++            : Colors.transparent,
++      ),
++      foregroundColor: const WidgetStatePropertyAll(Colors.white),
++      side: WidgetStateProperty.resolveWith(
++        (states) => states.contains(WidgetState.focused)
++            ? BorderSide(color: colors.primary, width: 2.5)
++            : BorderSide.none,
++      ),
++      shape: WidgetStatePropertyAll(
++        RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
++      ),
++    );
++  }
++
+   Widget _sideButton({
+     required Key key,
+     required IconData icon,
+@@ -4987,11 +5551,17 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+           key: key,
+           tooltip: label,
+           onPressed: onPressed,
+-          icon: Icon(icon, color: color, size: 24),
++          style: _overlayButtonStyle(context),
