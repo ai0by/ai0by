@@ -1,0 +1,221 @@
+       child: ColoredBox(color: Colors.black, child: _body()),
+     );
+     if (widget.embedded) return content;
+-    return Scaffold(
++    final scaffold = Scaffold(
+       backgroundColor: Colors.black,
+       body: SafeArea(
+         child: Column(
+@@ -877,6 +982,44 @@ class _VerticalFeedScreenState extends State<VerticalFeedScreen>
+         ),
+       ),
+     );
++    // 电视（0.8.1）：遥控器返回键容易误触，直接退出会打断正在看的剧。
++    // 这里拦一层确认框，确认后才真正返回（`Navigator.pop()` 不经过 PopScope）。
++    if (!AppLayout.isTelevision(context)) return scaffold;
++    return PopScope(
++      canPop: false,
++      onPopInvokedWithResult: (didPop, result) {
++        if (didPop) return;
++        unawaited(_confirmLeavePlayback());
++      },
++      child: scaffold,
++    );
++  }
++
++  /// 是否已弹出"退出播放"确认框（防止连续按返回叠出多个对话框）。
++  bool _leaveDialogOpen = false;
++
++  Future<void> _confirmLeavePlayback() async {
++    if (_leaveDialogOpen || _closed || !mounted) return;
++    _leaveDialogOpen = true;
++    // 弹框期间暂停，避免"对话框挡着画面、声音还在放"。
++    final remote = _currentRemoteActions;
++    remote?.setPaused(true);
++    try {
++      final leave = await showTvConfirmDialog(
++        context,
++        title: '退出播放？',
++        message: '按「返回」或选「继续观看」接着看；选「退出播放」返回上一页。',
++        confirmLabel: '退出播放',
++        cancelLabel: '继续观看',
++      );
++      if (leave && mounted) {
++        Navigator.of(context).pop();
++        return;
++      }
++      remote?.setPaused(false);
++    } finally {
++      _leaveDialogOpen = false;
++    }
+   }
+ 
+   Widget _header() => Container(
+@@ -1009,6 +1152,12 @@ class _VerticalFeedScreenState extends State<VerticalFeedScreen>
+           onSwitchDrama: _jumpForSwipe,
+           onOpenDetail: () => _openDetail(drama),
+           onEpisodeStateChanged: isCurrent ? _onPageEpisodeStateChanged : null,
++          // 所有页都上报遥控入口（按剧集 id 归档），父级按键时再按当前页取用。
++          onRemoteActions: (actions) => _onPageRemoteActions(
++            '${drama.source}-${drama.id}',
++            actions,
++          ),
++          onReturnFocus: _focus.requestFocus,
+           // 单剧模式（0.2.29）：起始集 / 本地文件模式 / 续播位置。
+           // 只在单剧模式（第一页）生效；首页无限流保持原行为。
+           initialEpisodeIndex: widget.singleDrama != null
+@@ -1255,6 +1404,55 @@ typedef EpisodeStateReporter =
+       Future<void> Function()? playPrev,
+     });
+ 
++/// 子页上报给父级的遥控器操作入口（0.8.0 恢复电视支持）。
++///
++/// 父级（`_VerticalFeedScreenState`）持有竖滑流的 [Focus]，
++/// 遥控器按键先在父级的 `_onKey` 里被翻译成这里的动作；
++/// 而"控件显隐、播放器实例、选集面板"这些状态都在子页
++/// （`_FeedPageState`）内部，所以由子页把入口上报上来。
++///
++/// 与 `EpisodeStateReporter` 同一思路：不用 GlobalKey，
++/// 避免当前页切换时 State（含播放器）被 Flutter 整体搬移。
++class _FeedRemoteActions {
++  const _FeedRemoteActions({
++    required this.showControls,
++    required this.hideControlsIfVisible,
++    required this.togglePlayback,
++    required this.seekBy,
++    required this.openEpisodes,
++    required this.holdStart,
++    required this.holdEnd,
++    required this.setPaused,
++  });
++
++  /// 显示控件并把焦点交给播放按钮（电视上按"确定"的效果）。
++  final VoidCallback showControls;
++
++  /// 控件可见时收起；返回是否真的收起了（供返回键判断）。
++  final bool Function() hideControlsIfVisible;
++
++  /// 播放 / 暂停。
++  final VoidCallback togglePlayback;
++
++  /// 前进 / 后退若干秒（负数为后退）。
++  final void Function(int seconds) seekBy;
++
++  /// 打开选集面板。
++  final VoidCallback openEpisodes;
++
++  /// 遥控长按「确定」开始 3 倍速（0.8.3）。
++  final VoidCallback holdStart;
++
++  /// 遥控松开「确定」，恢复原倍速（0.8.3）。
++  final VoidCallback holdEnd;
++
++  /// 弹出确认框期间暂停 / 恢复播放（0.8.1）。
++  ///
++  /// 只暂停"本来在播"的视频，恢复时也只在确实被本次暂停过才继续，
++  /// 避免把用户自己按的暂停改回播放。
++  final void Function(bool paused);
++}
++
+ /// 单页：一个视频 + 播放控件 + 信息栏。
+ class _FeedPage extends StatefulWidget {
+   const _FeedPage({
+@@ -1274,6 +1472,8 @@ class _FeedPage extends StatefulWidget {
+     required this.onOpenDetail,
+     this.playerFactory,
+     this.onEpisodeStateChanged,
++    this.onRemoteActions,
++    this.onReturnFocus,
+     this.videoBuilder,
+     this.initialEpisodeIndex = 0,
+     this.initialPosition = 0,
+@@ -1289,6 +1489,15 @@ class _FeedPage extends StatefulWidget {
+ 
+   /// 上报"本页还能否切到下一集"，并附上切集入口，用于父级决定滑动语义。
+   final EpisodeStateReporter? onEpisodeStateChanged;
++
++  /// 上报本页的遥控器操作入口（0.8.0 电视支持，仅当前页非空）。
++  final ValueChanged<_FeedRemoteActions?>? onRemoteActions;
++
++  /// 把焦点还给竖滑流（控件收起后调用，0.8.0）。
++  ///
++  /// 电视上控件按钮一旦获得焦点，收起控件后焦点会掉到根 FocusScope，
++  /// 父级的 `_onKey` 就收不到方向键了；因此必须显式把焦点还回去。
++  final VoidCallback? onReturnFocus;
+   final AppRepository repository;
+   final LocalStore store;
+ 
+@@ -1382,6 +1591,54 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+   bool _panelOpen = false;
+   bool _controlsVisible = true;
+ 
++  /// 是否电视模式（0.8.0 恢复电视支持）。
++  ///
++  /// 在 `didChangeDependencies` 里缓存：`dispose` 与部分异步回调中
++  /// 不能再用 `context` 读 InheritedWidget（会抛 "deactivated widget"）。
++  bool _television = false;
++
++  /// 是否强制软件解码（0.8.3）。
++  ///
++  /// 两个来源：设置里的「电视兼容模式」，或播放页的自动降级
++  /// （连续两轮拿不到画面帧 → 判定硬解有问题 → 切软解重来一次）。
++  /// 一旦置位，本页后续所有重试都用 `hwdec=no`。
++  bool _softwareDecode = false;
++
++  /// 已经自动降级过几次（0.8.3）。
++  ///
++  /// 只降级一次：软解再失败就不是解码器的问题了，
++  /// 继续降级只会让用户在黑屏上多等几轮。
++  int _decodeEscalations = 0;
++
++  /// 连续"起不来 / 没画面"的轮次（0.8.3），用于判断该不该怀疑硬解。
++  /// 一旦拿到画面就清零，所以偶发的一次卡顿不会触发降级。
++  int _decodeStalls = 0;
++
++  /// 电视模式下播放控件的焦点（默认落在播放/暂停按钮上）。
++  final _playFocus = FocusNode(debugLabel: 'feed-play-button');
++
++  /// 电视模式下"重试"按钮的焦点（0.8.1）。
++  ///
++  /// 加载失败时按确定键应当直接落到"重试"上——此时播放按钮不可用，
++  /// 焦点落在它身上等于遥控器没有反应。
++  final _retryFocus = FocusNode(debugLabel: 'feed-retry');
++
++  /// 控件层的焦点范围（0.8.0）。
++  ///
++  /// `hasFocus` 为 true 表示"焦点落在控件层的任意按钮上"，
++  /// 用于抑制自动隐藏——一隐藏控件层就被 `ExcludeFocus` 排除，
++  /// 焦点掉回根 FocusScope，遥控器方向键随之失效。
++  final _controlsScope = FocusScopeNode(debugLabel: 'feed-controls');
++
++  /// 本页上报给父级的遥控器操作入口（0.8.0）。
++  _FeedRemoteActions? _reportedActions;
++
++  /// 选集弹层里"当前正在播的那一集"的焦点（0.8.3）。
++  ///
++  /// 用一个常驻节点而不是 `autofocus`：当前集可能在视口外，
++  /// autofocus 生效时它还没被构建，焦点会丢。
++  final _episodeCurrentFocus = FocusNode(debugLabel: 'episode-current');
++
+   /// 窗口亮度下限（0.7.8，`XQ-0114`）：避免滑到全黑看不见。
+   static const double _minBrightness = .05;
+ 
+@@ -1603,6 +1860,8 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+     final preferences = widget.store.playbackPreferences;
+     _speed = preferences.speed;
+     _quality = preferences.quality;
++    // 电视兼容模式（0.8.3）：用户手动强制软解时，从第一次 open 就生效。
++    _softwareDecode = widget.store.tvCompatMode;
+     // 单剧模式（0.2.29）：从指定集开始播放（详情页/下载页点的是第几集）。
+     _episodeIndex = widget.initialEpisodeIndex;
+     _pendingStart = widget.initialPosition;
+@@ -1628,9 +1887,31 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+     // 0.7.6：提前读一次系统媒体音量，避免第一次调音量时起点是 0。
+     unawaited(_syncSystemVolume());
+     unawaited(_syncScreenBrightness());
++    // 0.8.0：把遥控器操作入口上报给父级（父级持有竖滑流的 Focus）。
++    WidgetsBinding.instance.addPostFrameCallback((_) {
++      if (!mounted || _closed) return;
++      final actions = _FeedRemoteActions(
++        showControls: _showControlsForRemote,
++        hideControlsIfVisible: _hideControlsForRemote,
