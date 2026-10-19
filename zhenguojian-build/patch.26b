@@ -1,0 +1,71 @@
+@@ -2050,6 +2365,9 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+         _noFrameTicks++;
+         if (_noFrameTicks >= _noFrameTicksLimit) {
+           _noFrameTicks = 0;
++          // "报告在播、却拿不到画面尺寸"是硬解坏掉的**强信号**（0.8.3）：
++          // 网络问题不会让播放器报告 playing=true。这里先降级再谈切线路。
++          if (_escalateDecode()) return;
+           unawaited(_recover());
+           return;
+         }
+@@ -2375,13 +2693,28 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+     _fullscreenRevision.dispose();
+     unawaited(ScreenBrightness.reset());
+     _tick.dispose();
++    // 0.8.0：撤销上报给父级的遥控入口，并释放控件焦点节点。
++    if (_reportedActions != null) {
++      widget.onRemoteActions?.call(null);
++      _reportedActions = null;
++    }
++    _playFocus.dispose();
++    _retryFocus.dispose();
++    _controlsScope.dispose();
++    _episodeCurrentFocus.dispose();
+     // 若离开时还锁着横屏，必须恢复竖屏并显示系统栏，否则整个应用会一直横着。
++    // 电视（0.8.0）：电视本身就是横屏设备，锁竖屏会让部分盒子把画面缩成竖条，
++    // 因此电视模式下不做方向恢复。
+     if (_landscape) {
+       _landscape = false;
+-      unawaited(
+-        SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]),
+-      );
+-      unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
++      if (!_television) {
++        unawaited(
++          SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]),
++        );
++        unawaited(
++          SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge),
++        );
++      }
+     }
+     _releasePlayer();
+     // 预载器（0.2.31）由**父级**持有并释放（0.6.9 改为全流共享），
+@@ -2502,6 +2835,10 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+   void _scheduleHide() {
+     _hideTimer?.cancel();
+     if (_closed || _panelOpen) return;
++    // 电视（0.8.0）：焦点落在控件按钮上时不能自动隐藏。
++    // 一隐藏控件层就被 ExcludeFocus 排除，焦点掉回根 FocusScope，
++    // 遥控器方向键随之失效（用户感受就是"按一下就失灵"）。
++    if (_television && _controlsScope.hasFocus) return;
+     // 加速中不自动隐藏（松开后由 _interactionChanged 恢复显示与计时）。
+     if (_interactions?.boosting ?? false) return;
+     if (!(_player?.state.playing ?? false)) return;
+@@ -2510,12 +2847,102 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+       if (_seekValue != null) return;
+       if (!(_player?.state.playing ?? false)) return;
+       if (_interactions?.boosting ?? false) return;
++      if (_television && _controlsScope.hasFocus) return;
+       setState(() => _controlsVisible = false);
+       // 用户操作，跳过节流立即刷新（0.3.1）。
+       _refreshFullscreen(immediate: true);
+     });
+   }
+ 
++  /// 电视遥控"确定"键：显示控件并把焦点交给播放按钮（0.8.0）。
++  ///
++  /// 不在 [_showControls] 里做焦点转移，是因为它还被自动播放、切集等
++  /// 内部流程调用；那些场景抢走焦点会让遥控器上下键（切剧）失效。
++  /// 只有用户真的按下确定键时才转移焦点。
++  void _showControlsForRemote() {
