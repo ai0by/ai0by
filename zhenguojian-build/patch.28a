@@ -1,0 +1,65 @@
++        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 9),
++        overlayShape: const RoundSliderOverlayShape(overlayRadius: 22),
++      ),
++    ),
++  );
++
+   /// 让全屏层重建（状态变化时调用）。
+   ///
+   /// 节流到 250ms（0.3.1 性能修复）：全屏层内容较重（进度条 + 选集），
+@@ -4651,6 +5142,9 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+                   ),
+                   const SizedBox(height: 12),
+                   OutlinedButton(
++                    // 0.8.1：电视上按确定键时焦点落到"重试"。
++                    key: const ValueKey('feed-retry'),
++                    focusNode: _retryFocus,
+                     onPressed: () {
+                       _ready = false;
+                       // 0.3.5：播放器已释放时先重建再加载，避免在已释放实例上操作。
+@@ -4711,7 +5205,18 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+             },
+           ),
+         // 控件层。
+-        IgnorePointer(
++        //
++        // 0.8.0 电视支持：
++        // - `ExcludeFocus`：控件隐藏时不得获得焦点，否则遥控器方向键会落到
++        //   一排看不见的按钮上（表现为"遥控器乱跳、按了没反应"）；
++        // - `FocusScope.onFocusChange`：记录焦点是否落在控件层内，
++        //   有焦点时不自动隐藏（见 `_scheduleHide`）。
++        ExcludeFocus(
++          excluding: !visible,
++          child: FocusScope(
++            node: _controlsScope,
++            onFocusChange: _onControlsFocusChanged,
++            child: IgnorePointer(
+           ignoring: !visible,
+           child: AnimatedOpacity(
+             opacity: visible ? 1 : 0,
+@@ -4822,10 +5327,14 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+                                 children: [
+                                   IconButton(
+                                     key: const ValueKey('feed-play-toggle'),
++                                    // 0.8.0：电视上按"确定"后焦点落到这里，
++                                    // 再按一次确定即暂停/播放。
++                                    focusNode: _playFocus,
+                                     tooltip: (state?.playing ?? false)
+                                         ? '暂停'
+                                         : '播放',
+                                     onPressed: _togglePlayback,
++                                    style: _overlayButtonStyle(context),
+                                     icon: Icon(
+                                       (state?.playing ?? false)
+                                           ? Icons.pause_rounded
+@@ -4841,10 +5350,22 @@ class _FeedPageState extends State<_FeedPage> with WidgetsBindingObserver {
+                                     ),
+                                   ),
+                                   Expanded(
+-                                    child: SliderTheme(
+-                                      data: SliderTheme.of(
+-                                        context,
+-                                      ).copyWith(trackHeight: 3),
++                                    // 电视上把进度条从焦点链里摘掉（0.8.3）。
++                                    //
++                                    // Slider 被遥控器聚焦后是个**焦点陷阱**：
