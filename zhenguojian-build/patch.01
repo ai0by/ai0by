@@ -1,0 +1,209 @@
+ }
+ 
+@@ -75,6 +100,13 @@ class AppLayout extends InheritedWidget {
+   final bool television;
+   final String version;
+ 
++  /// 电视过扫描安全边距（0.8.0）。
++  ///
++  /// 电视/投影仪普遍存在 3%~5% 的过扫描（overscan），贴边内容会被裁掉。
++  /// 电视模式下给整个应用留出安全边距，避免侧边导航首项、底部按钮行
++  /// 和进度条两端被屏幕边框吃掉。
++  static const overscan = EdgeInsets.symmetric(horizontal: 24, vertical: 12);
++
+   static bool isTelevision(BuildContext context) =>
+       context.dependOnInheritedWidgetOfExactType<AppLayout>()?.television ??
+       false;
+diff --git a/lib/catalog_browser.dart b/lib/catalog_browser.dart
+index c9e9cb8..bec88fc 100644
+--- a/lib/catalog_browser.dart
++++ b/lib/catalog_browser.dart
+@@ -64,6 +64,24 @@ class CatalogBrowser {
+     updateDramas([drama]);
+   }
+ 
++  /// 浏览过的全部剧目（按站源去重汇总），0.8.4 新增。
++  ///
++  /// 给**本地拼音首字母搜索**用：联网搜索返回的永远只是一小撮结果，
++  /// 如果用户先搜中文、再敲拼音首字母，只在那一小撮里过滤就会误判成
++  /// "搜不到"。这里把已经缓存过的剧目全部拉出来当搜索池。
++  ///
++  /// 只读快照，调用方随便改不影响内部缓存。
++  List<Drama> cachedLibrary(Iterable<String> sourceIds) {
++    final seen = <String>{};
++    final result = <Drama>[];
++    for (final id in sourceIds) {
++      for (final drama in _library[id]?.values ?? const <Drama>[]) {
++        if (seen.add('${drama.source}/${drama.id}')) result.add(drama);
++      }
++    }
++    return result;
++  }
++
+   void updateDramas(Iterable<Drama> dramas) {
+     final updates = {for (final drama in dramas) drama.id: drama};
+     for (final drama in updates.values) {
+diff --git a/lib/catalog_sort.dart b/lib/catalog_sort.dart
+index 8596897..707e13b 100644
+--- a/lib/catalog_sort.dart
++++ b/lib/catalog_sort.dart
+@@ -1,4 +1,5 @@
+ import 'models.dart';
++import 'pinyin.dart';
+ 
+ enum CatalogSort {
+   source('默认顺序'),
+@@ -72,7 +73,19 @@ bool matchesDramaQuery(Drama drama, String query) {
+       .split(RegExp(r'\s+'))
+       .map(normalizedSearchText)
+       .where((word) => word.isNotEmpty);
+-  return terms.every(fields.contains);
++  return terms.every(
++    (term) =>
++        fields.contains(term) ||
++        // 拼音/首字母兜底（0.8.4）。
++        //
++        // 电视上没有输入法时用户只能用遥控器敲字母，敲 `hjdnz` 应当能搜到
++        // 「黄金大逆转」。这里只对**标题**做拼音：描述和标签太长，
++        // 命中噪音大且没有实际意义。
++        //
++        // 非纯字母关键词（中文、数字、混合）在 `matchesPinyin`
++        // 内部直接返回 false，所以原有搜索行为完全不变。
++        matchesPinyin(drama.title, term),
++  );
+ }
+ 
+ double? catalogMetric(String text) {
+diff --git a/lib/home_screen.dart b/lib/home_screen.dart
+index f5aeffb..eeff542 100644
+--- a/lib/home_screen.dart
++++ b/lib/home_screen.dart
+@@ -15,6 +15,7 @@ import 'catalog_auto_updater.dart';
+ import 'catalog_sort.dart';
+ import 'catalog_sort_sheet.dart';
+ import 'recommendations_screen.dart';
++import 'tv_home.dart';
+ import 'vertical_feed_screen.dart';
+ import 'rankings_screen.dart';
+ import 'detail_screen.dart';
+@@ -23,10 +24,12 @@ import 'local_store.dart';
+ import 'lan_screen.dart';
+ import 'models.dart';
+ import 'remote_widgets.dart';
++import 'tv_dialogs.dart';
+ import 'widgets.dart';
+ import 'vip_icon.dart';
+ import 'settings_screen.dart';
+ import 'profiles_screen.dart';
++import 'pinyin.dart';
+ import 'search_input.dart';
+ import 'sources_screen.dart';
+ import 'batch_download_screen.dart';
+@@ -70,6 +73,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+   /// 多选站源（非空时优先于单源/全部，作为当前浏览范围）。
+   List<String> _multiSources = const [];
+   List<Drama> _items = [];
++  /// 当前生效的拼音/首字母关键词（0.8.4），空串表示没在用拼音搜索。
++  ///
++  /// 单独存一份而不是复用 `_search.text`：用户敲完 `hjdnz` 之后可能又手动
++  /// 改了输入框但没提交，这时候列表应该保持上一次提交的结果，而不是抖成空。
++  String _pinyinQuery = '';
++  /// 拼音搜索的候选池 = 浏览过的全部剧目（见 `CatalogBrowser.library`）。
++  List<Drama> _pinyinPool = const [];
+   bool _loading = true;
+   bool _loadingMore = false;
+   bool _hasMore = true;
+@@ -226,9 +236,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+       return '筛选本机已更新剧库';
+     }
+     final names = online.map((source) => source.name).join('、');
++    // 「或拼音/首字母」（0.8.4）：这个能力不写在提示里，用户不会知道。
+     return online.length == _group.sources.length
+-        ? '搜索${names}短剧'
+-        : '搜索${names}及本机剧库';
++        ? '搜索${names}短剧，或拼音/首字母'
++        : '搜索${names}及本机剧库，或拼音/首字母';
+   }
+ 
+   String get _category => _categorySelections[_group.id] ?? '';
+@@ -372,26 +383,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+   /// 才写回并重载一次，中途可按「取消」或点遮罩放弃。
+   Widget _sourceMenu() {
+     final enabled = widget.store.sources.isNotEmpty;
+-    return InkWell(
++    return SourceSwitchPill(
+       key: const ValueKey('source-switch'),
+-      borderRadius: BorderRadius.circular(8),
+-      onTap: enabled ? _openSourceSheet : null,
+-      child: SizedBox(
+-        height: 48,
+-        child: Row(
+-          mainAxisSize: MainAxisSize.min,
+-          children: [
+-            Flexible(
+-              child: Text(
+-                _group.name,
+-                overflow: TextOverflow.ellipsis,
+-                style: const TextStyle(fontWeight: FontWeight.w800),
+-              ),
+-            ),
+-            if (enabled) const Icon(Icons.expand_more_rounded),
+-          ],
+-        ),
+-      ),
++      label: _group.name,
++      count: _group.sources.length,
++      onPressed: enabled ? _openSourceSheet : null,
+     );
+   }
+ 
+@@ -408,16 +404,51 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+           if (_multiSources.contains(site.id)) site.groupId,
+       if (_multiSources.isEmpty) _source.groupId,
+     };
+-    final result = await showModalBottomSheet<Set<String>>(
+-      context: context,
+-      backgroundColor: Colors.transparent,
+-      isScrollControlled: true,
+-      builder: (sheetContext) => _SourcePickerSheet(
+-        groups: groups,
+-        initial: initial,
+-        allSources: widget.store.sources,
+-      ),
+-    );
++    // TV 上用**居中对话框**而不是底部弹窗：
++    // 底部弹窗在 16:9 电视上离视线中心太远，且容易被底部过扫描裁掉；
++    // 同时遥控器的焦点在居中卡片里横向移动更自然。
++    final television = AppLayout.isTelevision(context);
++    final Set<String>? result;
++    if (television) {
++      result = await showDialog<Set<String>>(
++        context: context,
++        barrierColor: Colors.black.withValues(alpha: .66),
++        builder: (dialogContext) => Dialog(
++          backgroundColor: Colors.transparent,
++          elevation: 0,
++          insetPadding: const EdgeInsets.symmetric(
++            horizontal: 48,
++            vertical: 32,
++          ),
++          child: ConstrainedBox(
++            constraints: const BoxConstraints(maxWidth: 760),
++            child: _SourcePickerSheet(
++              groups: groups,
++              initial: initial,
++              allSources: widget.store.sources,
++              television: true,
++            ),
++          ),
++        ),
++      );
++    } else {
++      result = await showModalBottomSheet<Set<String>>(
++        context: context,
++        backgroundColor: Colors.transparent,
++        isScrollControlled: true,
++        builder: (sheetContext) => SafeArea(
++          top: false,
++          child: Padding(
++            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
