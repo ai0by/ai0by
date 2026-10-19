@@ -26,11 +26,14 @@ jobs:
           carrier="$GITHUB_WORKSPACE"
           cat "$carrier"/zhenguojian-build/patch.* > /tmp/zhenguojian.patch
           echo "8949841d9155acbe3bc97a357f00dc3bfc9754d62a25d4b21a16e9503235a724  /tmp/zhenguojian.patch" | sha256sum -c -
+          echo "aa083c271a097e8cafc3230bfd73a2bb67d9769ea69b16d2b7396386b4da2cae  $carrier/zhenguojian-build/pinyin-spelling-correction.patch" | sha256sum -c -
           git clone https://github.com/kuoluoss/zhenguojian.git /tmp/zhenguojian
           cd /tmp/zhenguojian
           git checkout c934d1e2aa4f59c6ef93813ba63cd9376cbb159e
           git apply --check /tmp/zhenguojian.patch
           git apply /tmp/zhenguojian.patch
+          git apply --check "$carrier/zhenguojian-build/pinyin-spelling-correction.patch"
+          git apply "$carrier/zhenguojian-build/pinyin-spelling-correction.patch"
           grep -q '^version: 0.8.4+79$' pubspec.yaml
           grep -q 'pinyin: ^3.3.0' pubspec.yaml
 
